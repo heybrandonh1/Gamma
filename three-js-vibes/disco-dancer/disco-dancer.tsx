@@ -1,0 +1,350 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+
+import { findBone, disposeObject } from "./bone-utils";
+import { buildGoldenKey } from "./golden-key";
+import { buildPartyHat } from "./party-hat";
+import { buildDiscoFloor } from "./disco-floor";
+import {
+  createAnimationController,
+  pickPrimaryClip,
+  type AnimationController,
+} from "./animation-controller";
+import { DancerFallback } from "./dancer-fallback";
+
+export interface DiscoDancerProps {
+  /** URL of the Samba Dancing FBX (Mixamo rig). Host app serves from /public. */
+  sambaUrl: string;
+  /** Optional second clip; when provided, "break" mode crossfades to it. */
+  breakdanceUrl?: string;
+  /** When true, animation, swap timer and floor shimmer all pause. */
+  reduceMotion?: boolean | null;
+  /** CSS aspect-ratio for the canvas wrapper. Defaults to "1 / 0.72". */
+  aspectRatio?: string;
+  /** Extra classes merged onto the canvas wrapper. */
+  className?: string;
+}
+
+const LOOK_AT = new THREE.Vector3(0, 100, 0);
+
+function hasWebGL(): boolean {
+  if (typeof document === "undefined") return false;
+  try {
+    const canvas = document.createElement("canvas");
+    const gl =
+      canvas.getContext("webgl") ||
+      canvas.getContext("experimental-webgl");
+    return !!gl;
+  } catch {
+    return false;
+  }
+}
+
+export function DiscoDancer({
+  sambaUrl,
+  breakdanceUrl,
+  reduceMotion,
+  aspectRatio = "1 / 0.72",
+  className,
+}: DiscoDancerProps) {
+  const mountRef = useRef<HTMLDivElement>(null);
+  const reduceMotionRef = useRef(reduceMotion ?? false);
+  const controllerRef = useRef<AnimationController | null>(null);
+  const loadGenerationRef = useRef(0);
+  const [failed, setFailed] = useState(false);
+
+  reduceMotionRef.current = reduceMotion ?? false;
+
+  // Push the latest reduceMotion value into the controller without a re-mount.
+  useEffect(() => {
+    controllerRef.current?.setReducedMotion(reduceMotion ?? false);
+  }, [reduceMotion]);
+
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+
+    if (!hasWebGL()) {
+      setFailed(true);
+      return;
+    }
+
+    const loadGeneration = ++loadGenerationRef.current;
+    let alive = true;
+    let raf = 0;
+    let mixer: THREE.AnimationMixer | null = null;
+    let root: THREE.Group | null = null;
+    let keyDispose: (() => void) | null = null;
+    let hatDispose: (() => void) | null = null;
+    let floorDispose: (() => void) | null = null;
+    let floorUpdate: ((elapsed: number, paused?: boolean) => void) | null = null;
+
+    const scene = new THREE.Scene();
+
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x222222, 3.2);
+    hemiLight.position.set(0, 200, 0);
+    scene.add(hemiLight);
+
+    const dirLight = new THREE.DirectionalLight(0xffffff, 3);
+    dirLight.position.set(0, 200, 100);
+    dirLight.castShadow = true;
+    dirLight.shadow.camera.top = 180;
+    dirLight.shadow.camera.bottom = -100;
+    dirLight.shadow.camera.left = -120;
+    dirLight.shadow.camera.right = 120;
+    scene.add(dirLight);
+
+    // Disco floor (replaces the plain ground from the original samba scene).
+    const floor = buildDiscoFloor();
+    scene.add(floor.group);
+    floorUpdate = floor.update;
+    floorDispose = floor.dispose;
+
+    const clock = new THREE.Clock();
+    const camera = new THREE.PerspectiveCamera(45, 1, 1, 2000);
+    camera.position.set(100, 200, 300);
+    camera.lookAt(LOOK_AT);
+
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    } catch (err) {
+      console.error("[disco-dancer] WebGL init failed:", err);
+      setFailed(true);
+      return;
+    }
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.setClearColor(0x000000, 0);
+
+    const resize = () => {
+      const w = Math.max(280, mount.clientWidth || 400);
+      const h = Math.max(280, Math.min(520, Math.round(w * 0.72)));
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h);
+    };
+
+    mount.appendChild(renderer.domElement);
+    resize();
+
+    const ro = new ResizeObserver(resize);
+    ro.observe(mount);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.copy(LOOK_AT);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = 120;
+    controls.maxDistance = 900;
+    controls.update();
+
+    renderer.domElement.style.touchAction = "none";
+    renderer.domElement.style.cursor = "grab";
+
+    type Jump = { start: number; duration: number; height: number };
+    let jump: Jump | null = null;
+
+    const onDown = () => {
+      renderer.domElement.style.cursor = "grabbing";
+    };
+    const onUp = () => {
+      renderer.domElement.style.cursor = "grab";
+    };
+    const onClick = () => {
+      if (!root || reduceMotionRef.current) return;
+      if (jump) return;
+      jump = { start: performance.now(), duration: 750, height: 120 };
+    };
+
+    renderer.domElement.addEventListener("pointerdown", onDown);
+    renderer.domElement.addEventListener("click", onClick);
+    window.addEventListener("pointerup", onUp);
+
+    const loader = new FBXLoader();
+
+    loader.load(
+      sambaUrl,
+      (sambaObject) => {
+        if (!alive || loadGeneration !== loadGenerationRef.current) {
+          disposeObject(sambaObject);
+          return;
+        }
+
+        if (root) {
+          scene.remove(root);
+          disposeObject(root);
+        }
+
+        root = sambaObject;
+        sambaObject.scale.setScalar(1);
+
+        sambaObject.traverse((child) => {
+          if ((child as THREE.Mesh).isMesh) {
+            (child as THREE.Mesh).castShadow = true;
+            (child as THREE.Mesh).receiveShadow = true;
+          }
+        });
+
+        const sambaClip = pickPrimaryClip(sambaObject.animations);
+        if (!sambaClip) {
+          console.warn("[disco-dancer] samba FBX has no animation clips");
+          scene.add(sambaObject);
+          return;
+        }
+
+        mixer = new THREE.AnimationMixer(sambaObject);
+        const sambaAction = mixer.clipAction(sambaClip);
+        sambaAction.play();
+
+        const finishSetup = (breakAction: THREE.AnimationAction | null) => {
+          controllerRef.current = createAnimationController({
+            root: sambaObject,
+            sambaAction,
+            breakAction,
+          });
+          controllerRef.current.setReducedMotion(reduceMotionRef.current);
+        };
+
+        if (breakdanceUrl) {
+          // Load the breakdance clip onto the same mixer/skeleton.
+          new FBXLoader().load(
+            breakdanceUrl,
+            (breakObject) => {
+              if (!alive || loadGeneration !== loadGenerationRef.current) {
+                disposeObject(breakObject);
+                return;
+              }
+              const breakClip = pickPrimaryClip(breakObject.animations);
+              if (!breakClip || !mixer) {
+                finishSetup(null);
+                disposeObject(breakObject);
+                return;
+              }
+              const breakAction = mixer.clipAction(breakClip);
+              finishSetup(breakAction);
+              // We only needed the clip; the mesh stays unused.
+              disposeObject(breakObject);
+            },
+            undefined,
+            (err) => {
+              console.warn("[disco-dancer] breakdance FBX failed; falling back to procedural:", err);
+              finishSetup(null);
+            },
+          );
+        } else {
+          finishSetup(null);
+        }
+
+        // Party hat — parented to head bone with a small upward offset.
+        const head = findBone(sambaObject, /Head$/i);
+        if (head) {
+          const { group: hat, dispose } = buildPartyHat();
+          hatDispose = dispose;
+          // Mixamo head bone +Y points up the skull, so the hat sits cleanly.
+          hat.position.set(0, 14, 2);
+          hat.rotation.x = -0.05;
+          head.add(hat);
+        }
+
+        // Golden key — right hand preferred, left as fallback.
+        const hand =
+          findBone(sambaObject, /RightHand$/i) ??
+          findBone(sambaObject, /LeftHand$/i);
+        if (hand) {
+          const { group: key, dispose } = buildGoldenKey();
+          keyDispose = dispose;
+          key.scale.setScalar(1.4);
+          key.rotation.set(Math.PI / 2, 0, Math.PI / 2);
+          key.position.set(8, -2, 2);
+          hand.add(key);
+        }
+
+        scene.add(sambaObject);
+      },
+      undefined,
+      (err) => {
+        console.warn("[disco-dancer] samba FBX failed to load:", err);
+      },
+    );
+
+    const tick = () => {
+      if (!alive) return;
+      raf = requestAnimationFrame(tick);
+      const delta = clock.getDelta();
+      const elapsed = clock.getElapsedTime();
+
+      if (mixer && !reduceMotionRef.current) mixer.update(delta);
+      controllerRef.current?.update(performance.now());
+      floorUpdate?.(elapsed, reduceMotionRef.current);
+
+      if (root) {
+        if (jump) {
+          const t = (performance.now() - jump.start) / jump.duration;
+          if (t >= 1) {
+            root.position.y = 0;
+            jump = null;
+          } else {
+            root.position.y = Math.sin(Math.PI * t) * jump.height;
+          }
+        } else {
+          root.position.y = 0;
+        }
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+    };
+    tick();
+
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      ro.disconnect();
+      controls.dispose();
+      renderer.domElement.removeEventListener("pointerdown", onDown);
+      renderer.domElement.removeEventListener("click", onClick);
+      window.removeEventListener("pointerup", onUp);
+      controllerRef.current?.dispose();
+      controllerRef.current = null;
+      if (root) {
+        scene.remove(root);
+        disposeObject(root);
+        root = null;
+      }
+      keyDispose?.();
+      keyDispose = null;
+      hatDispose?.();
+      hatDispose = null;
+      floorDispose?.();
+      floorDispose = null;
+      floorUpdate = null;
+      mixer = null;
+      renderer.dispose();
+      if (renderer.domElement.parentNode === mount) {
+        mount.removeChild(renderer.domElement);
+      }
+    };
+    // We deliberately don't list reduceMotion in deps — it's pulled through
+    // reduceMotionRef so toggling it doesn't tear down the scene.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sambaUrl, breakdanceUrl]);
+
+  if (failed) return <DancerFallback aspectRatio={aspectRatio} className={className} />;
+
+  return (
+    <div
+      ref={mountRef}
+      className={
+        "relative w-full overflow-hidden rounded-xl border border-black/10 bg-[#101216] " +
+        (className ?? "")
+      }
+      style={{ aspectRatio }}
+      aria-hidden
+    />
+  );
+}
