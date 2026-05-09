@@ -26,11 +26,15 @@ const PALETTE = [
   0xff3366, 0xff9933, 0xffd633, 0x33ff99, 0x33ccff, 0x9933ff, 0xffffff,
 ];
 
-const GRAVITY = 240;
-const DRAG = 0.4;
+// Slow, drifty confetti — gravity is roughly an eighth of real (~9.8 m/s² in
+// these units would be ~245), which gives pieces ~20s to fall from the
+// spawn band to the floor instead of a couple seconds. Spawn radius is wide
+// enough that pieces appear across the whole canvas, not just over the dancer.
+const GRAVITY = 35;
+const DRAG = 0.6;
 const SPAWN_Y_MIN = 600;
 const SPAWN_Y_MAX = 820;
-const SPAWN_RADIUS = 240;
+const SPAWN_RADIUS = 520;
 const FLOOR_Y = -40;
 
 interface Piece {
@@ -94,22 +98,26 @@ export function buildConfetti(): Confetti {
     mesh.visible = true;
     for (let i = 0; i < COUNT; i++) {
       const p = pieces[i];
+      // Square-root sampling gives a roughly uniform area distribution,
+      // so confetti looks evenly scattered rather than clumped at the
+      // center.
       const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * SPAWN_RADIUS;
+      const r = Math.sqrt(Math.random()) * SPAWN_RADIUS;
       p.px = Math.cos(angle) * r;
       p.py = SPAWN_Y_MIN + Math.random() * (SPAWN_Y_MAX - SPAWN_Y_MIN);
       p.pz = Math.sin(angle) * r;
-      // Mostly-down velocity with a little outward drift; this is what
-      // gives the cloud its "rained out" silhouette.
-      p.vx = (Math.random() - 0.5) * 60;
-      p.vy = -(40 + Math.random() * 60);
-      p.vz = (Math.random() - 0.5) * 60;
+      // Gentle initial velocity — most of the motion comes from gravity,
+      // and DRAG quickly damps the horizontal component anyway.
+      p.vx = (Math.random() - 0.5) * 20;
+      p.vy = -(8 + Math.random() * 14);
+      p.vz = (Math.random() - 0.5) * 20;
       p.rx = Math.random() * Math.PI * 2;
       p.ry = Math.random() * Math.PI * 2;
       p.rz = Math.random() * Math.PI * 2;
-      p.spinX = (Math.random() - 0.5) * 6;
-      p.spinY = (Math.random() - 0.5) * 6;
-      p.spinZ = (Math.random() - 0.5) * 6;
+      // Slower tumble so pieces look like they're floating, not whipping.
+      p.spinX = (Math.random() - 0.5) * 2.2;
+      p.spinY = (Math.random() - 0.5) * 2.2;
+      p.spinZ = (Math.random() - 0.5) * 2.2;
     }
     flushMatrices();
   }

@@ -18,12 +18,15 @@ export function buildPartyHat(): {
   const group = new THREE.Group();
   group.name = "disco-dancer-jester-hat";
 
-  // Chunky gold band — reads as the "crown" the spikes sprout from.
+  // Chunky gold band — reads as the "crown" the spikes sprout from. Glossy
+  // chrome-gold finish via MeshPhysicalMaterial's clearcoat.
   const bandGeo = new THREE.TorusGeometry(11, 1.6, 14, 32);
-  const bandMat = new THREE.MeshStandardMaterial({
+  const bandMat = new THREE.MeshPhysicalMaterial({
     color: 0xffd166,
     metalness: 1,
-    roughness: 0.18,
+    roughness: 0.08,
+    clearcoat: 1,
+    clearcoatRoughness: 0.04,
     emissive: 0x4a3000,
     emissiveIntensity: 0.25,
   });
@@ -46,12 +49,18 @@ export function buildPartyHat(): {
     // like a jester's hat. Cones default to +Y up so the rotation rolls
     // them onto the band without extra math.
     const spikeGeo = new THREE.ConeGeometry(4.2, 18, 18);
-    const spikeMat = new THREE.MeshStandardMaterial({
+    const spikeMat = new THREE.MeshPhysicalMaterial({
       color,
       emissive: color,
       emissiveIntensity: 0.4,
-      metalness: 0.2,
-      roughness: 0.45,
+      metalness: 0.15,
+      roughness: 0.18,
+      // Candy-coated gloss — the clearcoat layer puts a wet sheen on top
+      // of the colored shell, which is what reads as "glossy" to the eye.
+      clearcoat: 1,
+      clearcoatRoughness: 0.06,
+      sheen: 0.3,
+      sheenColor: new THREE.Color(0xffffff),
     });
     const spike = new THREE.Mesh(spikeGeo, spikeMat);
     spike.position.set(Math.cos(theta) * 6.5, 9, Math.sin(theta) * 6.5);
@@ -67,14 +76,17 @@ export function buildPartyHat(): {
     geometries.push(spikeGeo);
     materials.push(spikeMat);
 
-    // Pompom on tip — stronger emissive so it reads as a glowing bauble.
+    // Pompom on tip — stronger emissive so it reads as a glowing bauble,
+    // with the same glossy clearcoat as the spikes for visual continuity.
     const pomGeo = new THREE.SphereGeometry(2.4, 18, 14);
-    const pomMat = new THREE.MeshStandardMaterial({
+    const pomMat = new THREE.MeshPhysicalMaterial({
       color,
       emissive: color,
       emissiveIntensity: 1.0,
       metalness: 0.05,
-      roughness: 0.4,
+      roughness: 0.18,
+      clearcoat: 1,
+      clearcoatRoughness: 0.04,
     });
     const pom = new THREE.Mesh(pomGeo, pomMat);
     pom.position.y = 11; // Local to the spike (cone +Y is the tip).

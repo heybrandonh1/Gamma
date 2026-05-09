@@ -1,13 +1,16 @@
 import * as THREE from "three";
 
 /**
- * Disco floor: a TILES_PER_SIDE × TILES_PER_SIDE grid of square panels. Each
- * tile owns its own MeshStandardMaterial so we can lerp its emissive color
- * independently for the shimmer effect.
+ * Disco floor: a TILES_PER_SIDE × TILES_PER_SIDE grid of square panels.
  *
- * Tuned to read as a vibrant club floor against the new light card bg —
- * saturated party hues with a moderately strong emissive cap, but per-tile
- * phase randomization keeps it from strobing.
+ * About half the tiles are "lit" — they own a colored emissive material that
+ * cycles through the party palette out of phase with their neighbors. The
+ * rest are "dark" — neutral charcoal panels that just sit there. The mix
+ * gives the floor a lived-in, pixel-art-y feel rather than the busy
+ * everything-glows look of the previous version.
+ *
+ * Lit/dark assignment is deterministic via a small integer hash, so the
+ * pattern is identical across mounts and reduce-motion swaps.
  */
 
 const TILES_PER_SIDE = 16;
@@ -28,6 +31,22 @@ const PALETTE: number[] = [
 ];
 
 const MAX_EMISSIVE = 0.5;
+
+/** Roughly this fraction of tiles are colored/animated; rest stay dark. */
+const LIT_FRACTION = 0.55;
+
+/**
+ * Cheap integer hash → [0,1). Stable across runs so the pattern of lit vs
+ * dark tiles is identical every mount, which avoids visible "reshuffle"
+ * flashes when reduce-motion toggles or the canvas remounts.
+ */
+function tileHash(x: number, z: number): number {
+  let h = (x * 374761393 + z * 668265263) | 0;
+  h = (h ^ (h >>> 13)) | 0;
+  h = Math.imul(h, 1274126177) | 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h / 0xffffffff;
+}
 
 interface TileData {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
@@ -62,16 +81,30 @@ export function buildDiscoFloor(): {
 
   for (let x = 0; x < TILES_PER_SIDE; x++) {
     for (let z = 0; z < TILES_PER_SIDE; z++) {
-      const startIdx = (x * 7 + z * 13) % PALETTE.length;
-      const nextIdx = (startIdx + 1 + ((x + z) % (PALETTE.length - 1))) % PALETTE.length;
+      const lit = tileHash(x, z) < LIT_FRACTION;
 
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0x18181b,
-        emissive: PALETTE[startIdx],
-        emissiveIntensity: MAX_EMISSIVE * 0.6,
-        metalness: 0.2,
-        roughness: 0.5,
-      });
+      let mat: THREE.MeshStandardMaterial;
+      if (lit) {
+        const startIdx = (x * 7 + z * 13) % PALETTE.length;
+        mat = new THREE.MeshStandardMaterial({
+          color: 0x18181b,
+          emissive: PALETTE[startIdx],
+          emissiveIntensity: MAX_EMISSIVE * 0.6,
+          metalness: 0.2,
+          roughness: 0.5,
+        });
+      } else {
+        // Dark tile — slightly darker base, no emissive. Reads as the
+        // negative space between the colored tiles and lets the lit ones
+        // pop. Still receives shadows from the dancer/ball.
+        mat = new THREE.MeshStandardMaterial({
+          color: 0x101013,
+          emissive: 0x000000,
+          emissiveIntensity: 0,
+          metalness: 0.15,
+          roughness: 0.85,
+        });
+      }
 
       const mesh = new THREE.Mesh(tileGeo, mat);
       mesh.rotation.x = -Math.PI / 2;
@@ -83,13 +116,19 @@ export function buildDiscoFloor(): {
       mesh.receiveShadow = true;
       group.add(mesh);
 
-      tiles.push({
-        mesh,
-        phase: Math.random() * Math.PI * 2,
-        period: 3.5 + Math.random() * 3.5,
-        fromIdx: startIdx,
-        toIdx: nextIdx,
-      });
+      // Only push lit tiles into the animation list — dark ones don't need
+      // per-frame updates.
+      if (lit) {
+        const startIdx = (x * 7 + z * 13) % PALETTE.length;
+        const nextIdx = (startIdx + 1 + ((x + z) % (PALETTE.length - 1))) % PALETTE.length;
+        tiles.push({
+          mesh,
+          phase: Math.random() * Math.PI * 2,
+          period: 3.5 + Math.random() * 3.5,
+          fromIdx: startIdx,
+          toIdx: nextIdx,
+        });
+      }
     }
   }
 
@@ -124,7 +163,12 @@ export function buildDiscoFloor(): {
   }
 
   function dispose() {
-    for (const tile of tiles) tile.mesh.material.dispose();
+    // Dispose every tile's material — both lit ones (in `tiles`) and the
+    // dark ones (only reachable via the group children).
+    for (const child of group.children) {
+      const mesh = child as THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
+      if (mesh.isMesh && mesh.material) mesh.material.dispose();
+    }
     tileGeo.dispose();
   }
 

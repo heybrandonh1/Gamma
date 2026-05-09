@@ -14,7 +14,9 @@ import * as THREE from "three";
  * (https://threejs.org/examples/#webgl_materials_envmaps_hdr).
  */
 
-const RESTING_Y = 360;
+// Just a touch lower than the previous 360 — the ball reads a bit closer
+// to the dancer's silhouette without crowding the head.
+const RESTING_Y = 320;
 const HIDDEN_Y = 1100;
 const RADIUS = 28;
 
