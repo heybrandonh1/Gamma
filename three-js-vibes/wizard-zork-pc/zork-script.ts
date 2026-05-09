@@ -21,9 +21,9 @@ export const PROMPT = ">";
 
 export const OPENING: readonly string[] = [
   "ZORK I: The Great Underground Empire",
-  "Vibe-coded edition - a fantasy story",
-  "Copyright (c) 2026 the wizard at this table",
-  "Revision 88 / Serial number 26-05-09",
+  "Infocom interactive fiction - a fantasy story",
+  "Copyright (c) 1977, 1978, 1979 Infocom, Inc.",
+  "Revision 88 / Serial number 770814",
   "",
   "West of House",
   "You are standing in an open field west of a",
