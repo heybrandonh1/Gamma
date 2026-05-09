@@ -117,10 +117,15 @@ export function SportArena({
     // which branch was chosen. The `build` tag flips with each
     // intentional rebuild — handy when verifying that a deployed bundle
     // actually contains the latest cascade logic vs. a cached older one.
+    // Uses `console.warn` (not `info`) on purpose: the host app's
+    // `next.config.ts` strips `console.info` / `console.log` in
+    // production via SWC's `removeConsole` compiler option (only `error`
+    // / `warn` survive), so any future production debugging session
+    // would otherwise see no output.
     const webGPUAvailable = hasWebGPU();
-    console.info("[sport-arena] cascade decision", {
+    console.warn("[sport-arena] cascade decision", {
       webGPUAvailable,
-      build: "webgl-cascade-v1",
+      build: "webgl-cascade-v2",
     });
     if (!webGPUAvailable) {
       setFailed(true);

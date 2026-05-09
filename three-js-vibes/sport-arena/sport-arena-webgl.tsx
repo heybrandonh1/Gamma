@@ -91,14 +91,13 @@ export function SportArenaWebGL({
     const mount = mountRef.current;
     if (!mount) return;
 
-    // Diagnostics marker — see the WebGPU sibling for the rationale. The
-    // pair of cascade logs makes it trivial to tell from a single
-    // DevTools screenshot whether the page took the WebGPU branch, the
-    // WebGL branch, or fell through to the static square.
+    // Diagnostics marker — see the WebGPU sibling for the rationale,
+    // including why this is `console.warn` rather than `console.info`
+    // (host app strips info/log in production builds).
     const webGLAvailable = hasWebGL();
-    console.info("[sport-arena-webgl] cascade decision", {
+    console.warn("[sport-arena-webgl] cascade decision", {
       webGLAvailable,
-      build: "webgl-cascade-v1",
+      build: "webgl-cascade-v2",
     });
     if (!webGLAvailable) {
       setFailed(true);
