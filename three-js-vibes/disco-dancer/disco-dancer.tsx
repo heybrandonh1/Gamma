@@ -20,7 +20,7 @@ import {
   pickPrimaryClip,
   type AnimationController,
 } from "./animation-controller";
-import { DancerFallback } from "./dancer-fallback";
+import { VibeFallback } from "../_shared/vibe-fallback";
 
 export interface DiscoDancerProps {
   /** URL of the Samba Dancing FBX (Mixamo rig). Host app serves from /public. */
@@ -371,7 +371,7 @@ export function DiscoDancer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sambaUrl, breakdanceUrl]);
 
-  if (failed) return <DancerFallback aspectRatio={aspectRatio} className={className} />;
+  if (failed) return <VibeFallback aspectRatio={aspectRatio} className={className} />;
 
   return (
     <div

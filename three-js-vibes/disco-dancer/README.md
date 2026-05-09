@@ -53,6 +53,15 @@ t=12000+  steady state — confetti bursts every 25 s, ball + lights stay on
 - **Disco ball** — `IcosahedronGeometry` with `flatShading: true` for the mirror-facet look, `MeshStandardMaterial` at `metalness: 1, roughness: 0.08`, fed by a tiny PMREM env map of a colored gradient room so the facets actually reflect something. Suspended from a thin string with a chrome cap on top; warm `PointLight` at its center; spins forever.
 - **Club lights** — six colored `SpotLight`s mounted at the implicit ceiling, each sweeping its target in an independent circle near the floor. Two cast shadows; the rest are decorative. Tiny emissive bulb meshes mark the lights' positions.
 
+## Failure modes
+
+If the browser doesn't support WebGL or `THREE.WebGLRenderer` throws on init,
+the component renders the shared [`VibeFallback`](../_shared/vibe-fallback.tsx)
+square in place of the canvas. The host app should additionally wrap the
+component in an error boundary + `<noscript>` so chunk-load failures and
+JS-disabled browsers see the same friendly square — see Project Alpha's
+`<VibeErrorBoundary>` for an example.
+
 ## Accessibility
 
 Honors `prefers-reduced-motion` via the `reduceMotion` prop. When it flips on:

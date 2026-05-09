@@ -8,6 +8,10 @@ The house for AI-collaborated experiments, ideas, and concepts. Each subfolder i
 
 Tiny three.js scenes meant to be embedded as live cards in a portfolio (or anywhere else). Each vibe is a single React component that takes asset URLs as props and disposes cleanly on unmount.
 
+Shared bits live in `_shared/`:
+
+- **`VibeFallback`** — pure-JSX/CSS placeholder square ("Sorry! We can't load this cool stuff at this time"). Vibes render it directly when WebGL / hardware init fails; host apps render it inside `<noscript>` for JS-off browsers and as the fallback for any error boundary they wrap the vibe in.
+
 Current vibes:
 
 - **`disco-dancer/`** — A Mixamo dancer in a rainbow jester crown, dancing on a vibrant emissive tile floor. On mount, confetti rains down, a faceted chrome disco ball descends, and six sweeping ceiling spotlights kick on. Confetti bursts again every ~25 s. Loops samba and erupts into a procedural break flourish.
