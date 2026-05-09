@@ -52,7 +52,52 @@ function disposeRecursive(obj: THREE.Object3D) {
     const m = mesh.material;
     if (Array.isArray(m)) m.forEach((mat) => mat.dispose());
     else m?.dispose();
+    // InstancedMesh has its own instance-matrix buffer that needs disposing
+    // beyond the geometry/material — without this it leaks GPU memory.
+    if ((child as THREE.InstancedMesh).isInstancedMesh) {
+      (child as THREE.InstancedMesh).dispose();
+    }
   });
+}
+
+/**
+ * Procedural "pebbled leather" bump map. Generates a canvas filled with mid
+ * gray, then sprinkles thousands of small radial-gradient bright dots over
+ * it. Used as a `bumpMap` on the basketball and football so their surfaces
+ * shimmer with the bumpy, dimpled texture you see on real leather (the same
+ * effect a hand-stippled normal map gives, but procedural — no asset needed).
+ *
+ * Wraps with x4 horizontal repeat / x2 vertical so pole distortion on a
+ * sphere stays subtle. Color space is forced to NoColorSpace because bump
+ * maps are linear height data, not sRGB color.
+ */
+function makePebbleBumpMap(size: number, density: number): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "#808080";
+  ctx.fillRect(0, 0, size, size);
+  const num = Math.floor(size * size * density);
+  for (let i = 0; i < num; i++) {
+    const x = Math.random() * size;
+    const y = Math.random() * size;
+    const r = 1 + Math.random() * 1.6;
+    const a = 0.45 + Math.random() * 0.3;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, `rgba(255,255,255,${a})`);
+    grad.addColorStop(1, "rgba(128,128,128,0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(4, 2);
+  tex.colorSpace = THREE.NoColorSpace;
+  return tex;
 }
 
 function makeStandardMaterial(
@@ -78,48 +123,94 @@ function makeStandardMaterial(
 // ---------- baseball --------------------------------------------------------
 
 /**
- * Cream-white sphere + red stitch curve. The stitch curve is the classic
- * baseball figure-8 seam, parameterized as a wavy great-circle on the sphere
- * surface (latitude oscillates as a sine of double-longitude, giving the
- * tennis-ball-style two-lobe seam). The TubeGeometry hugs the surface with a
- * tiny outward bump so it doesn't z-fight the underlying sphere.
+ * Off-white cowhide sphere + 216 red angled cross-stitches placed along a
+ * figure-8 seam curve via `InstancedMesh` (one capsule per stitch, alternating
+ * tilt direction so adjacent stitches form the iconic zig-zag pattern).
+ *
+ * Why no central seam tube: a real baseball has no visible thread between
+ * stitches — just the panel join. Drawing a continuous red ring would look
+ * like piping rather than stitching, so we drop it and let the cross-stitch
+ * cadence be the seam.
+ *
+ * Construction:
+ *   1. Build the closed seam curve (φ = A·cos(2θ), θ = t) — classic
+ *      tennis-ball/baseball wavy great circle that traces both seam lobes.
+ *   2. Walk the curve at 216 evenly-spaced positions (~108 per lobe — what
+ *      a real MLB ball has).
+ *   3. At each position compute the Frenet frame on the sphere: tangent
+ *      (curve direction), normal (radial out), binormal (perp on surface).
+ *   4. Each stitch is a small capsule oriented along binormal + a tilt of
+ *      ±0.5 along tangent (sign alternates each stitch). This produces the
+ *      "//\\//\\" cross-stitching pattern you see on real cowhide.
  */
 export function buildBaseball(): SportMesh {
   const group = new THREE.Group();
   const radius = 0.85;
 
-  const sphereGeo = new THREE.SphereGeometry(radius, 96, 96);
-  const sphereMat = makeStandardMaterial(0xfff4dc, {
-    roughness: 0.55,
+  const sphereGeo = new THREE.SphereGeometry(radius, 128, 128);
+  const sphereMat = makeStandardMaterial(0xfaf6ed, {
+    roughness: 0.62,
     envMapIntensity: 0.85,
   });
-  const sphere = new THREE.Mesh(sphereGeo, sphereMat);
-  group.add(sphere);
+  group.add(new THREE.Mesh(sphereGeo, sphereMat));
 
-  // Build the seam curve: classic tennis-ball/baseball wavy great circle.
-  // φ(t) = A·cos(2t), θ(t) = t — gives a single closed loop that crosses
-  // itself visually as two opposing C-arcs when viewed from one side.
+  // Seam curve — used purely as a parametric path for stitch placement.
   const seamPoints: THREE.Vector3[] = [];
   const SEAM_AMP = 0.62;
-  const SEG = 240;
-  for (let i = 0; i < SEG; i++) {
-    const t = (i / SEG) * Math.PI * 2;
+  const SAMPLES = 240;
+  for (let i = 0; i < SAMPLES; i++) {
+    const t = (i / SAMPLES) * Math.PI * 2;
     const phi = Math.cos(2 * t) * SEAM_AMP;
-    const theta = t;
-    const r = radius * 1.005;
+    const r = radius;
     seamPoints.push(
       new THREE.Vector3(
-        r * Math.cos(phi) * Math.cos(theta),
+        r * Math.cos(phi) * Math.cos(t),
         r * Math.sin(phi),
-        r * Math.cos(phi) * Math.sin(theta),
+        r * Math.cos(phi) * Math.sin(t),
       ),
     );
   }
-  const seamCurve = new THREE.CatmullRomCurve3(seamPoints, /*closed*/ true);
-  const seamGeo = new THREE.TubeGeometry(seamCurve, 320, 0.018, 10, true);
-  const seamMat = makeStandardMaterial(0xc8302b, { roughness: 0.45 });
-  const seam = new THREE.Mesh(seamGeo, seamMat);
-  group.add(seam);
+  const seamCurve = new THREE.CatmullRomCurve3(seamPoints, true);
+
+  const STITCH_COUNT = 216;
+  const stitchGeo = new THREE.CapsuleGeometry(0.012, 0.075, 4, 8);
+  const stitchMat = makeStandardMaterial(0xc62a25, {
+    roughness: 0.55,
+    envMapIntensity: 0.7,
+  });
+  const stitches = new THREE.InstancedMesh(stitchGeo, stitchMat, STITCH_COUNT);
+
+  const dummy = new THREE.Object3D();
+  const tmpTan = new THREE.Vector3();
+  const tmpNorm = new THREE.Vector3();
+  const tmpBin = new THREE.Vector3();
+  const tmpDir = new THREE.Vector3();
+  const upY = new THREE.Vector3(0, 1, 0);
+  const tmpQuat = new THREE.Quaternion();
+
+  for (let i = 0; i < STITCH_COUNT; i++) {
+    const t = i / STITCH_COUNT;
+    const pos = seamCurve.getPointAt(t);
+    seamCurve.getTangentAt(t, tmpTan).normalize();
+    tmpNorm.copy(pos).normalize();
+    tmpBin.crossVectors(tmpTan, tmpNorm).normalize();
+
+    // Alternate tilt sign so consecutive stitches cross the seam from
+    // opposite directions — that's what creates the zig-zag pattern.
+    const tilt = i % 2 === 0 ? 0.55 : -0.55;
+    tmpDir.copy(tmpBin).addScaledVector(tmpTan, tilt).normalize();
+
+    // Sit stitches just above the surface so they're not buried by
+    // floating-point precision in the radial projection.
+    dummy.position.copy(pos).addScaledVector(tmpNorm, 0.014);
+    tmpQuat.setFromUnitVectors(upY, tmpDir);
+    dummy.quaternion.copy(tmpQuat);
+    dummy.scale.setScalar(1);
+    dummy.updateMatrix();
+    stitches.setMatrixAt(i, dummy.matrix);
+  }
+  stitches.instanceMatrix.needsUpdate = true;
+  group.add(stitches);
 
   return {
     object: group,
@@ -179,36 +270,47 @@ export function buildBat(): SportMesh {
 // ---------- basketball ------------------------------------------------------
 
 /**
- * Orange sphere + four dark seam tubes: one vertical great circle, one
- * horizontal great circle, plus two great circles tilted at ±45° around the
- * vertical axis to mimic the iconic eight-panel pattern.
+ * Pebbled-leather orange sphere + four dark seam tubes (1 horizontal great
+ * circle, 1 vertical, 2 tilted ±45° around y → 8-panel pattern). The pebbled
+ * surface comes from a procedural bump map rather than a texture asset, and
+ * is what turns the bare sphere from "smooth orange ball" into "real
+ * basketball with leather grain catching the light".
  */
 export function buildBasketball(): SportMesh {
   const group = new THREE.Group();
   const radius = 0.95;
 
-  const sphereGeo = new THREE.SphereGeometry(radius, 96, 96);
-  const sphereMat = makeStandardMaterial(0xff6f23, {
-    roughness: 0.78,
-    envMapIntensity: 0.7,
+  const bumpMap = makePebbleBumpMap(512, 0.05);
+
+  const sphereGeo = new THREE.SphereGeometry(radius, 128, 128);
+  const sphereMat = new THREE.MeshStandardMaterial({
+    color: 0xd35221,
+    roughness: 0.85,
+    metalness: 0.04,
+    bumpMap,
+    bumpScale: 0.009,
+    envMapIntensity: 0.65,
+    transparent: true,
+    opacity: 0,
   });
   group.add(new THREE.Mesh(sphereGeo, sphereMat));
 
-  const seamMat = makeStandardMaterial(0x2b1608, { roughness: 0.6 });
+  // Recessed-looking seam grooves: dark color, slightly thicker tube than
+  // before so they're visible against the pebbled surface.
+  const seamMat = makeStandardMaterial(0x1f0e07, {
+    roughness: 0.7,
+    envMapIntensity: 0.45,
+  });
 
-  // Helper: build a great-circle seam tube for a given normal direction.
-  // The seam lies in the plane perpendicular to `normal`, projected onto the
-  // sphere of radius `radius * 1.005` so it sits just above the surface.
   const greatCircle = (normal: THREE.Vector3) => {
     const n = normal.clone().normalize();
-    // Build a basis (u, v) for the plane perpendicular to n.
     const ref = Math.abs(n.x) < 0.9
       ? new THREE.Vector3(1, 0, 0)
       : new THREE.Vector3(0, 1, 0);
     const u = new THREE.Vector3().crossVectors(n, ref).normalize();
     const v = new THREE.Vector3().crossVectors(n, u).normalize();
     const pts: THREE.Vector3[] = [];
-    const r = radius * 1.005;
+    const r = radius * 1.004;
     const SEG = 192;
     for (let i = 0; i < SEG; i++) {
       const t = (i / SEG) * Math.PI * 2;
@@ -220,12 +322,12 @@ export function buildBasketball(): SportMesh {
       );
     }
     const curve = new THREE.CatmullRomCurve3(pts, true);
-    const geo = new THREE.TubeGeometry(curve, 256, 0.014, 8, true);
+    const geo = new THREE.TubeGeometry(curve, 256, 0.02, 10, true);
     return new THREE.Mesh(geo, seamMat);
   };
 
-  group.add(greatCircle(new THREE.Vector3(0, 1, 0))); // horizontal "equator"
-  group.add(greatCircle(new THREE.Vector3(1, 0, 0))); // vertical (around x)
+  group.add(greatCircle(new THREE.Vector3(0, 1, 0)));
+  group.add(greatCircle(new THREE.Vector3(1, 0, 0)));
   group.add(greatCircle(new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 4)));
   group.add(greatCircle(new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), -Math.PI / 4)));
 
@@ -238,6 +340,7 @@ export function buildBasketball(): SportMesh {
     },
     dispose() {
       disposeRecursive(group);
+      bumpMap.dispose();
     },
   };
 }
@@ -245,54 +348,107 @@ export function buildBasketball(): SportMesh {
 // ---------- football --------------------------------------------------------
 
 /**
- * Prolate spheroid (sphere stretched and pinched at the ends) + a white lace
- * strip down the middle with perpendicular stitches.
+ * Prolate-spheroid pebbled-leather football with the iconic white stripe
+ * bands near each tip and a row of thick white laces along the top seam.
+ *
+ * Geometry pipeline:
+ *   - Start from a sphere of radius 0.7.
+ *   - Stretch z by 1.7× and taper xy by `1 - (|z|/0.7)^4 · 0.55` so the
+ *     tips pinch to points (quartic falloff = sharper tip than a quadratic).
+ *
+ * Surface detail:
+ *   - Procedural pebble bump map (same helper as the basketball, slightly
+ *     denser) gives leather grain.
+ *   - Two white TubeGeometry rings at z = ±0.85 — radius computed analytically
+ *     from the deformation formula so they sit flush on the surface, not
+ *     floating above or biting into it.
+ *   - 7 thick white capsules along z ∈ [-0.275, +0.275] above the seam,
+ *     each oriented horizontally — the visible "laces" you grip.
  */
 export function buildFootball(): SportMesh {
   const group = new THREE.Group();
 
-  const ballGeo = new THREE.SphereGeometry(0.7, 96, 96);
+  const SPHERE_R = 0.7;
+  const Z_STRETCH = 1.7;
+  const TIP_FALLOFF = 0.55;
+
+  // Analytic xy radius of the deformed surface at a given world-z.
+  // Inverse of the deformation: world_z = sphere_z * Z_STRETCH, so
+  // sphere_z = world_z / Z_STRETCH. Then xy_orig = √(R² - sphere_z²) and
+  // tip_factor = 1 - (|sphere_z|/R)^4 · TIP_FALLOFF.
+  const xyRadiusAt = (worldZ: number) => {
+    const sz = worldZ / Z_STRETCH;
+    if (Math.abs(sz) >= SPHERE_R) return 0;
+    const xyOrig = Math.sqrt(SPHERE_R * SPHERE_R - sz * sz);
+    const tipF = 1 - Math.pow(Math.abs(sz) / SPHERE_R, 4) * TIP_FALLOFF;
+    return xyOrig * tipF;
+  };
+
+  const ballGeo = new THREE.SphereGeometry(SPHERE_R, 128, 128);
   const pos = ballGeo.attributes.position;
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const y = pos.getY(i);
     const z = pos.getZ(i);
-    const newZ = z * 1.7;
-    const tipFactor = 1 - Math.pow(Math.abs(z) / 0.7, 4) * 0.55;
+    const newZ = z * Z_STRETCH;
+    const tipFactor = 1 - Math.pow(Math.abs(z) / SPHERE_R, 4) * TIP_FALLOFF;
     pos.setXYZ(i, x * tipFactor, y * tipFactor, newZ);
   }
   pos.needsUpdate = true;
   ballGeo.computeVertexNormals();
-  const ballMat = makeStandardMaterial(0x6c3a1b, {
+
+  const bumpMap = makePebbleBumpMap(512, 0.055);
+  const ballMat = new THREE.MeshStandardMaterial({
+    color: 0x6b2f17,
     roughness: 0.7,
-    envMapIntensity: 0.8,
+    metalness: 0.04,
+    bumpMap,
+    bumpScale: 0.006,
+    envMapIntensity: 0.85,
+    transparent: true,
+    opacity: 0,
   });
   group.add(new THREE.Mesh(ballGeo, ballMat));
 
-  // Laces: a short white strip running along +y (top of ball) plus 6 cross
-  // stitches. The strip is a thin tube along the y-axis, sitting just above
-  // the ball surface near z ≈ 0.
-  const laceMat = makeStandardMaterial(0xf2efe4, { roughness: 0.45 });
-  const stripPts: THREE.Vector3[] = [];
-  for (let i = 0; i <= 24; i++) {
-    const t = (i / 24) * 2 - 1; // -1..1
-    stripPts.push(new THREE.Vector3(0, 0.62 - 0.02 * t * t, t * 0.55));
+  // White stripe bands near each tip — thick TubeGeometry rings whose radius
+  // matches the deformed ellipsoid's local cross-section at that z.
+  const stripeMat = makeStandardMaterial(0xefe9da, {
+    roughness: 0.55,
+    envMapIntensity: 0.7,
+  });
+  const stripeOffset = 0.005;
+  for (const stripeZ of [0.88, -0.88]) {
+    const ringR = xyRadiusAt(stripeZ) + stripeOffset;
+    if (ringR <= 0) continue;
+    const stripePts: THREE.Vector3[] = [];
+    const SEG = 96;
+    for (let i = 0; i < SEG; i++) {
+      const t = (i / SEG) * Math.PI * 2;
+      stripePts.push(new THREE.Vector3(Math.cos(t) * ringR, Math.sin(t) * ringR, stripeZ));
+    }
+    const stripeCurve = new THREE.CatmullRomCurve3(stripePts, true);
+    const stripeGeo = new THREE.TubeGeometry(stripeCurve, 128, 0.055, 10, true);
+    group.add(new THREE.Mesh(stripeGeo, stripeMat));
   }
-  const stripCurve = new THREE.CatmullRomCurve3(stripPts);
-  const stripGeo = new THREE.TubeGeometry(stripCurve, 60, 0.012, 8, false);
-  group.add(new THREE.Mesh(stripGeo, laceMat));
 
-  // Cross stitches — short horizontal tubes perpendicular to the strip.
-  for (let i = 0; i < 7; i++) {
-    const t = i / 6;
-    const z = (t * 2 - 1) * 0.4;
-    const stitchPts = [
-      new THREE.Vector3(-0.06, 0.625 - 0.01 * (z * z), z),
-      new THREE.Vector3(0.06, 0.625 - 0.01 * (z * z), z),
-    ];
-    const stitchCurve = new THREE.CatmullRomCurve3(stitchPts);
-    const stitchGeo = new THREE.TubeGeometry(stitchCurve, 8, 0.014, 6, false);
-    group.add(new THREE.Mesh(stitchGeo, laceMat));
+  // Laces — row of thick white capsules sitting on top of the football
+  // (along +y) right above the seam. CapsuleGeometry's default axis is +Y,
+  // so we rotate around z by π/2 to lay them horizontally along the x-axis.
+  const laceMat = makeStandardMaterial(0xf5f1e6, {
+    roughness: 0.4,
+    envMapIntensity: 0.7,
+  });
+  const NUM_LACES = 7;
+  const LACE_SPAN = 0.55;
+  for (let i = 0; i < NUM_LACES; i++) {
+    const t = i / (NUM_LACES - 1);
+    const laceZ = (t - 0.5) * LACE_SPAN;
+    const yTop = xyRadiusAt(laceZ);
+    const laceGeo = new THREE.CapsuleGeometry(0.022, 0.13, 6, 12);
+    const lace = new THREE.Mesh(laceGeo, laceMat);
+    lace.position.set(0, yTop + 0.012, laceZ);
+    lace.rotation.z = Math.PI / 2;
+    group.add(lace);
   }
 
   // Tilt slightly so the laces are visible from the default camera angle.
@@ -308,6 +464,7 @@ export function buildFootball(): SportMesh {
     },
     dispose() {
       disposeRecursive(group);
+      bumpMap.dispose();
     },
   };
 }
