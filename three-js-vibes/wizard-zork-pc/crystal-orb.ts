@@ -68,8 +68,9 @@ export function createCrystalOrb(opts: CrystalOrbOptions): CrystalOrb {
 
   // A subtle violet point light embedded in the crystal so it
   // self-illuminates a touch — sells the "magical" read without
-  // overpowering the candles.
-  const innerLight = new THREE.PointLight(0xb088ff, 0.7, 2.0, 1.6);
+  // overpowering the candles or polluting the CRT side of the
+  // table. Tighter range (1.4 vs 2.0) keeps it local.
+  const innerLight = new THREE.PointLight(0xb088ff, 0.35, 1.4, 1.8);
   innerLight.position.set(0, 0, 0);
   group.add(innerLight);
 
@@ -92,7 +93,7 @@ export function createCrystalOrb(opts: CrystalOrbOptions): CrystalOrb {
       crystal.rotation.y += delta * 0.5;
       crystal.rotation.x = Math.sin(phase * 0.4) * 0.15;
       group.position.y = baseY + Math.sin(phase * 0.8) * 0.03;
-      innerLight.intensity = 0.55 + 0.25 * (0.5 + 0.5 * Math.sin(phase * 1.7));
+      innerLight.intensity = 0.28 + 0.14 * (0.5 + 0.5 * Math.sin(phase * 1.7));
     },
     dispose() {
       baseGeo.dispose();

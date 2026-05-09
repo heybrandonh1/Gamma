@@ -88,9 +88,13 @@ const FRAG = /* glsl */ `
     float vign = smoothstep(1.4, 0.4, length(centred));
     col *= vign;
 
-    // Lift bright pixels above 1.0 so UnrealBloomPass picks them up.
-    col *= uEmissive;
-    col += pow(max(col - vec3(0.6), vec3(0.0)), vec3(2.0)) * 1.4;
+    // Lift bright pixels just above 1.0 so UnrealBloomPass picks up
+    // the prompt / caret / typed glyphs but doesn't wash the whole
+    // body of text into a single bright smear. Earlier we doubled
+    // bright pixels with a quadratic boost — that fought legibility
+    // on every readable line, so the boost is gone now and the
+    // emissive multiplier alone (boot ramp) is what feeds the bloom.
+    col *= uEmissive * 1.05;
 
     col *= mask;
 

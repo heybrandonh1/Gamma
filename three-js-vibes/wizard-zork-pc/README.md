@@ -42,6 +42,16 @@ prompt    open       caret blinks, accepts user input, idle timer running
 prompt    +12 s idle loop returns to opening
 ```
 
+### Camera
+
+`OrbitControls` is configured with rotate-only + scroll-to-zoom
+(unlike the other vibes, which disable zoom — reading the CRT
+terminal is the whole point of this one). Zoom is bounded to
+`minDistance: 2.2` (close enough to fill the frame with the screen)
+and `maxDistance: 9.0` (so visitors don't punt the camera into
+empty space). Pan is still disabled. `autoRotate` is on by default
+and toggles off under `reduceMotion`.
+
 ### Hybrid input
 
 Click the canvas (or tap on touch) to focus a hidden `<input>` —

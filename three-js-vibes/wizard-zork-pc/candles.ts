@@ -107,7 +107,13 @@ export function createCandles(opts: CandlesOptions): Candles {
     candle.add(flame);
     flames.push(flame);
 
-    const light = new THREE.PointLight(0xffaa55, 1.3, 4.5, 1.4);
+    // Candle point light — lower-intensity than your gut feeling
+    // wants. The bloom + flame additive material already sell the
+    // "candle is bright" read; if the light itself is strong, it
+    // washes the table top and pollutes the CRT screen. 0.5 is
+    // enough to throw a warm pool around the candle base without
+    // bleeding onto everything else.
+    const light = new THREE.PointLight(0xffaa55, 0.55, 3.5, 1.6);
     light.position.y = 0.82;
     candle.add(light);
     lights.push(light);
@@ -125,7 +131,7 @@ export function createCandles(opts: CandlesOptions): Candles {
       reduced = v;
       if (reduced) {
         for (const f of flames) f.scale.setScalar(1);
-        for (const l of lights) l.intensity = 1.3;
+        for (const l of lights) l.intensity = 0.55;
       }
     },
     tick(_delta: number) {
@@ -135,7 +141,7 @@ export function createCandles(opts: CandlesOptions): Candles {
         const n = noise1d(t * 4 + seeds[i]);
         const scale = 0.85 + 0.25 * (n * 0.5 + 0.5);
         flames[i].scale.set(0.9 + 0.15 * n, scale, 0.9 + 0.15 * n);
-        lights[i].intensity = 1.05 + 0.55 * (n * 0.5 + 0.5);
+        lights[i].intensity = 0.4 + 0.25 * (n * 0.5 + 0.5);
       }
     },
     dispose() {

@@ -175,10 +175,16 @@ export function WizardZorkPc({
     // Bloom is what sells the magical CRT — without it the screen looks
     // like a flat decal. With it, the bright phosphor / candles / orb
     // light bleeds into the scene the way it would on real glass.
+    //
+    // Tuned for *text legibility first*: a high threshold (0.85) so only
+    // the brightest pixels (flame tips, prompt caret, rune peaks)
+    // bloom; modest strength (0.22) and tight radius (0.35) so the
+    // halo doesn't wash over the terminal text the user is trying to
+    // read. Earlier values (0.55 / 0.7 / 0.6) blew the whole scene out.
     const composer = new EffectComposer(renderer);
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.addPass(new RenderPass(scene, camera));
-    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.55, 0.7, 0.6);
+    const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.22, 0.35, 0.85);
     composer.addPass(bloom);
     composer.addPass(new OutputPass());
 
@@ -215,10 +221,21 @@ export function WizardZorkPc({
     // ourselves would fight it. The slow drift we want is exactly what
     // `autoRotate` does — it advances the azimuthal angle and pauses
     // briefly while the user drags. Suppressed under reduceMotion.
+    //
+    // Zoom is enabled (unlike the other vibes) because reading the
+    // CRT terminal is the whole point — a static distant view would
+    // never be legible. `minDistance` parks the camera close enough
+    // that the screen fills most of the frame; `maxDistance` keeps
+    // visitors from zooming out into empty space. `zoomSpeed` is
+    // dampened so a single trackpad nudge doesn't punt the camera
+    // across the whole range.
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.enableZoom = false;
+    controls.enableZoom = true;
+    controls.zoomSpeed = 0.6;
+    controls.minDistance = 2.2;
+    controls.maxDistance = 9.0;
     controls.enablePan = false;
     controls.rotateSpeed = 0.55;
     controls.target.set(0, 1.0, 0);
