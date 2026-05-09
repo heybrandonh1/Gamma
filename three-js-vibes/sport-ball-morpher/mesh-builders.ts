@@ -39,9 +39,11 @@ export interface SportMesh {
   /**
    * Trigger a fresh jello wobble centered at `localPoint` (a point in this
    * mesh's local coordinate space — typically returned by raycasting and
-   * then `worldToLocal`-ed).
+   * then `worldToLocal`-ed). `amp` is optional; the click handler passes
+   * nothing (uses the default click intensity), the show controller passes
+   * a higher value to make morph wobbles visibly louder than clicks.
    */
-  poke(localPoint: THREE.Vector3): void;
+  poke(localPoint: THREE.Vector3, amp?: number): void;
   /** Advance the in-flight wobble. Cheap no-op once the wobble has decayed. */
   tickJiggle(deltaSeconds: number): void;
   dispose(): void;
@@ -244,8 +246,8 @@ export function buildBaseball(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
-    poke(p) {
-      pokeJiggle(jiggle, p);
+    poke(p, a) {
+      pokeJiggle(jiggle, p, a);
     },
     tickJiggle(d) {
       tickJiggle(jiggle, d);
@@ -294,8 +296,8 @@ export function buildBat(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
-    poke(p) {
-      pokeJiggle(jiggle, p);
+    poke(p, a) {
+      pokeJiggle(jiggle, p, a);
     },
     tickJiggle(d) {
       tickJiggle(jiggle, d);
@@ -381,8 +383,8 @@ export function buildBasketball(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
-    poke(p) {
-      pokeJiggle(jiggle, p);
+    poke(p, a) {
+      pokeJiggle(jiggle, p, a);
     },
     tickJiggle(d) {
       tickJiggle(jiggle, d);
@@ -522,8 +524,8 @@ export function buildFootball(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
-    poke(p) {
-      pokeJiggle(jiggle, p);
+    poke(p, a) {
+      pokeJiggle(jiggle, p, a);
     },
     tickJiggle(d) {
       tickJiggle(jiggle, d);
@@ -737,8 +739,8 @@ export function buildSoccerBall(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
-    poke(p) {
-      pokeJiggle(jiggle, p);
+    poke(p, a) {
+      pokeJiggle(jiggle, p, a);
     },
     tickJiggle(d) {
       tickJiggle(jiggle, d);
@@ -794,8 +796,8 @@ export function buildHockeyPuck(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
-    poke(p) {
-      pokeJiggle(jiggle, p);
+    poke(p, a) {
+      pokeJiggle(jiggle, p, a);
     },
     tickJiggle(d) {
       tickJiggle(jiggle, d);

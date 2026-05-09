@@ -136,11 +136,25 @@ if (uJiggleAmp > 0.0) {
   material.needsUpdate = true;
 }
 
-/** Trigger a fresh wobble centered at `localPoint` (object-local space). */
-export function pokeJiggle(uniforms: JiggleUniforms, localPoint: THREE.Vector3): void {
+/**
+ * Trigger a fresh wobble centered at `localPoint` (object-local space).
+ *
+ * `amp` is optional and defaults to {@link AMP_PEAK} (the click intensity).
+ * The morph cycle in the show controller passes a higher value to make the
+ * transition wobble visibly more energetic than a passive click — same
+ * shader, just a louder strike. Subsequent calls overwrite the previous
+ * impulse rather than accumulating, so chaining several pokes during a
+ * morph window keeps the wobble at full energy without compounding it
+ * past sane bounds.
+ */
+export function pokeJiggle(
+  uniforms: JiggleUniforms,
+  localPoint: THREE.Vector3,
+  amp: number = AMP_PEAK,
+): void {
   uniforms.uJiggleCenter.value.copy(localPoint);
   uniforms.uJiggleTime.value = 0;
-  uniforms.uJiggleAmp.value = AMP_PEAK;
+  uniforms.uJiggleAmp.value = amp;
 }
 
 /**
