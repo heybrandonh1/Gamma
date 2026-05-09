@@ -45,8 +45,12 @@ export interface JiggleUniforms {
  * Peak amplitude (in object-space units) of a fresh poke. Multiplied by the
  * spatial falloff and the temporal decay in the shader, so this is the
  * theoretical maximum displacement at the click point at t = 0.
+ *
+ * Tuned high enough that a single click reads as a profound jello wobble
+ * across the whole body — at this scale the body's silhouette visibly
+ * heaves with each oscillation, not just the spot under the cursor.
  */
-const AMP_PEAK = 0.085;
+const AMP_PEAK = 0.22;
 
 /**
  * Once a mesh's `uJiggleAmp` decays under this threshold we treat it as
@@ -55,11 +59,12 @@ const AMP_PEAK = 0.085;
 const AMP_REST = 0.0008;
 
 /**
- * Per-second decay rate of the amplitude after a poke. AMP_PEAK · e^(-DECAY · t)
- * crosses AMP_REST around t ≈ 1.3 s, which matches the wobble-and-settle
- * cadence of real jello.
+ * Per-second decay rate of the amplitude after a poke. With the AMP_PEAK
+ * above, `AMP_PEAK · e^(-DECAY · t)` crosses AMP_REST around t ≈ 2.8 s, so
+ * the body wobbles for the better part of three seconds before settling —
+ * long enough for several visible oscillations of the slow ~10 rad/s wave.
  */
-const DECAY_RATE = 3.5;
+const DECAY_RATE = 2.0;
 
 export function createJiggleUniforms(): JiggleUniforms {
   return {
@@ -102,10 +107,25 @@ uniform float uJiggleAmp;`,
         "#include <begin_vertex>",
         `#include <begin_vertex>
 if (uJiggleAmp > 0.0) {
-  float jDist = length(position - uJiggleCenter);
-  float jRadial = exp(-jDist * 1.6);
   float jDecay = exp(-uJiggleTime * ${DECAY_RATE.toFixed(2)});
-  float jWave = sin(uJiggleTime * 16.0 - jDist * 4.0);
+
+  // Whole-body breathing pulse: scale every vertex radially around the
+  // origin so the click impact registers in the silhouette, not just at
+  // the click point. Slightly slower than the local ripple (8 vs 10 rad/s)
+  // so the two go out of phase over time, giving the mass that wobbly,
+  // out-of-sync, "different parts of the jelly are doing different things"
+  // feel that one-frequency motion can't.
+  float jPulse = uJiggleAmp * jDecay * cos(uJiggleTime * 8.0) * 0.35;
+  transformed *= 1.0 + jPulse;
+
+  // Local ripple: damped wave centered at the click point, falling off
+  // gently with distance so a sizeable fraction of the body shares in
+  // each oscillation. cos() (not sin) so the click point is at maximum
+  // outward displacement at t = 0 — i.e. the impact pushes outward
+  // first, then bounces in, mirroring how a poke into real jelly reads.
+  float jDist = length(position - uJiggleCenter);
+  float jRadial = exp(-jDist * 0.55);
+  float jWave = cos(uJiggleTime * 10.0 - jDist * 2.0);
   float jDisp = uJiggleAmp * jDecay * jRadial * jWave;
   transformed += normalize(normal) * jDisp;
 }`,

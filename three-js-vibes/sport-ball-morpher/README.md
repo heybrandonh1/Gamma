@@ -43,12 +43,24 @@ mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
 - `jiggle.ts` — owns the **click-to-jello** wobble. Each `SportMesh` carries
   its own `JiggleUniforms` ({ center, time-since-click, amplitude }) that
   every material on the mesh shares. `attachJiggleShader` patches a
-  `MeshStandardMaterial`'s vertex stage via `onBeforeCompile` to inject a
-  damped sine wave centered at the click point, falling off radially with
-  `e^(-1.6·d)` and decaying temporally with `e^(-3.5·t)`. When the user
-  clicks, `pokeJiggle` resets time → 0 and amplitude → peak; the wobble
-  rings out for ~1 s and settles to zero, at which point we early-out the
-  GPU work to keep things idle.
+  `MeshStandardMaterial`'s vertex stage via `onBeforeCompile` to inject
+  *two* layered terms under one shared `e^(-2.0·t)` decay envelope:
+  - A **whole-body breathing pulse** that scales every vertex radially
+    around the origin at 8 rad/s, so the silhouette itself heaves on
+    each oscillation.
+  - A **local ripple** centered at the click point — `cos(10·t − 2·d)`
+    with a gentle `e^(-0.55·d)` radial falloff so the wave carries
+    across most of the body before fading. `cos` (not `sin`) so the
+    click point is at maximum outward displacement at *t* = 0, the
+    way a poke pushes jelly out first and lets it bounce back.
+
+  The two frequencies (8 and 10 rad/s) drift out of phase over time, which
+  is what gives a real jelly mass its "different parts wobbling at slightly
+  different times" character — one-frequency motion can't fake that.
+
+  When the user clicks, `pokeJiggle` resets time → 0 and amplitude →
+  `AMP_PEAK = 0.22`; the wobble rings out for ~2.8 s and settles to zero,
+  at which point we early-out the GPU work to keep things idle.
 - `sport-ball-morpher.tsx` — React component. Sets up the renderer, scene,
   camera, and lighting; generates a PMREM cubemap from `RoomEnvironment` so
   all `MeshStandardMaterial` surfaces pick up real image-based lighting;
