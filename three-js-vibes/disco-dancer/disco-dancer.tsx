@@ -29,6 +29,13 @@ export interface DiscoDancerProps {
   breakdanceUrl?: string;
   /** When true, animation, swap timer and floor shimmer all pause. */
   reduceMotion?: boolean | null;
+  /**
+   * When true, the dancer never leaves the samba loop — the periodic break
+   * burst (clip crossfade in FBX mode, or root spin + speed-up + forward tilt
+   * in procedural mode) is suppressed entirely. Use this when the surrounding
+   * page wants a calmer, predictable loop and not the periodic flourish.
+   */
+  disableBreaks?: boolean;
   /** CSS aspect-ratio for the canvas wrapper. Defaults to "1 / 0.72". */
   aspectRatio?: string;
   /** Extra classes merged onto the canvas wrapper. */
@@ -54,6 +61,7 @@ export function DiscoDancer({
   sambaUrl,
   breakdanceUrl,
   reduceMotion,
+  disableBreaks = false,
   aspectRatio = "1 / 0.72",
   className,
 }: DiscoDancerProps) {
@@ -240,7 +248,11 @@ export function DiscoDancer({
           controllerRef.current.setReducedMotion(reduceMotionRef.current);
         };
 
-        if (breakdanceUrl) {
+        if (disableBreaks) {
+          // Caller wants a samba-only loop — skip the swap controller entirely
+          // so the mixer just keeps playing the already-`.play()`-ed samba
+          // action forever, with no procedural overlay or clip crossfade.
+        } else if (breakdanceUrl) {
           // Load the breakdance clip onto the same mixer/skeleton.
           new FBXLoader().load(
             breakdanceUrl,
@@ -369,7 +381,7 @@ export function DiscoDancer({
     // We deliberately don't list reduceMotion in deps — it's pulled through
     // reduceMotionRef so toggling it doesn't tear down the scene.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sambaUrl, breakdanceUrl]);
+  }, [sambaUrl, breakdanceUrl, disableBreaks]);
 
   if (failed) return <VibeFallback aspectRatio={aspectRatio} className={className} />;
 

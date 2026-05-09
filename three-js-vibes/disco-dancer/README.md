@@ -22,6 +22,7 @@ The component is a regular React client component; it owns its renderer, scene, 
 | `sambaUrl`       | `string`              | yes      | URL of the Samba Dancing FBX (Mixamo rig). Host app serves this from `/public`. |
 | `breakdanceUrl`  | `string`              | no       | Optional second FBX. When provided, "break" mode crossfades into this clip instead of running the procedural overlay. |
 | `reduceMotion`   | `boolean \| null`     | no       | When `true`, the show snaps to its steady-state visuals with no animation: ball at rest, lights on, no confetti, samba paused. |
+| `disableBreaks`  | `boolean`             | no       | When `true`, the periodic break burst is suppressed entirely (no clip crossfade, no procedural spin / tilt / speed-up). The dancer just loops samba forever. Useful when the surrounding page wants a calmer, predictable loop. |
 | `aspectRatio`    | `string`              | no       | CSS `aspect-ratio` for the canvas wrapper. Defaults to `1 / 0.72`.            |
 | `className`      | `string`              | no       | Extra classes merged onto the canvas wrapper.                                |
 
@@ -43,6 +44,7 @@ t=12000+  steady state — confetti bursts every 25 s, ball + lights stay on
 - **Break burst** — every 18–26 s the animation controller fires a ~4.5 s "break" segment:
   - if `breakdanceUrl` is set, it crossfades from samba → breakdance and back;
   - otherwise it boosts samba `timeScale` to ~1.6×, spins the root, and tilts forward, simulating a break style flourish on the existing clip.
+  - pass `disableBreaks` to skip this beat entirely and keep the dancer on the samba loop.
 - **Disco floor** — 16×16 grid of emissive tiles cycling through a saturated party palette (hot pink / tangerine / yellow / mint / cyan / purple). Per-tile phase randomization keeps it shimmering rather than strobing.
 - **Rainbow jester hat** — a chunky gold band with four colored cone "horns" (magenta / gold / mint / indigo), each topped with a glowing emissive pompom. Parented to the head bone.
 - **Click to jump** — the dancer hops on tap.
