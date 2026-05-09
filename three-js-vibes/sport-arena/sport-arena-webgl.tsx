@@ -91,7 +91,16 @@ export function SportArenaWebGL({
     const mount = mountRef.current;
     if (!mount) return;
 
-    if (!hasWebGL()) {
+    // Diagnostics marker — see the WebGPU sibling for the rationale. The
+    // pair of cascade logs makes it trivial to tell from a single
+    // DevTools screenshot whether the page took the WebGPU branch, the
+    // WebGL branch, or fell through to the static square.
+    const webGLAvailable = hasWebGL();
+    console.info("[sport-arena-webgl] cascade decision", {
+      webGLAvailable,
+      build: "webgl-cascade-v1",
+    });
+    if (!webGLAvailable) {
       setFailed(true);
       return;
     }
@@ -622,11 +631,27 @@ export function SportArenaWebGL({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (failed) return <VibeFallback aspectRatio={aspectRatio} className={className} />;
+  // Custom message when this WebGL companion can't render either —
+  // distinguishes "both APIs unavailable" from the boundary's default
+  // "requires WebGPU" copy at a glance, so a single screenshot tells us
+  // whether the cascade reached this branch or the page's
+  // `<VibeErrorBoundary>` caught a render-time throw further up.
+  if (failed)
+    return (
+      <VibeFallback
+        aspectRatio={aspectRatio}
+        className={className}
+        message="Sorry! Both WebGPU and WebGL are unavailable in this browser."
+      />
+    );
 
   return (
     <div
       ref={mountRef}
+      // `data-render-mode` lets us confirm via DevTools inspection that
+      // the WebGL companion mounted (vs. a stale chunk of the WebGPU-only
+      // version, which has no such attribute on its mount div).
+      data-render-mode="webgl"
       className={
         "relative w-full overflow-hidden rounded-xl border border-foreground/10 " +
         "bg-[color-mix(in_srgb,var(--color-background)_92%,#a0a0a0)] " +

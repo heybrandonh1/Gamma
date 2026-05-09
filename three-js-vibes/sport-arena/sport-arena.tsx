@@ -112,7 +112,17 @@ export function SportArena({
     const mount = mountRef.current;
     if (!mount) return;
 
-    if (!hasWebGPU()) {
+    // Diagnostics marker: surfaces the cascade decision in DevTools so we
+    // can tell from a single screenshot whether the WebGPU detect ran and
+    // which branch was chosen. The `build` tag flips with each
+    // intentional rebuild — handy when verifying that a deployed bundle
+    // actually contains the latest cascade logic vs. a cached older one.
+    const webGPUAvailable = hasWebGPU();
+    console.info("[sport-arena] cascade decision", {
+      webGPUAvailable,
+      build: "webgl-cascade-v1",
+    });
+    if (!webGPUAvailable) {
       setFailed(true);
       return;
     }
