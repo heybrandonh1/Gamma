@@ -64,12 +64,35 @@ mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
     green right) — only the swap is the dynamic content (sport balls +
     mannequin instead of the example's colored sphere instances).
 
-## WebGPU + fallback
+## WebGPU → WebGL → static fallback cascade
 
-The vibe **requires WebGPU**. If `navigator.gpu` is missing or
-`renderer.init()` fails (older browser, no compatible adapter, blocked by
-policy, etc.), the component renders the shared `<VibeFallback />` square so
-the playground card stays the same size and the page never errors.
+The card lights up in three tiers depending on what the browser can do:
+
+1. **WebGPU available** — `<SportArena />` runs the full SSGI + TRAA
+   pipeline described above. This is the look the demo is designed
+   around (Chromium 113+, Edge, Safari 26+ TP, Firefox Nightly).
+2. **WebGPU missing or `renderer.init()` throws** — `<SportArena />`
+   transparently mounts `<SportArenaWebGL />` (`sport-arena-webgl.tsx`)
+   instead. That component is a plain `THREE.WebGLRenderer`
+   reimplementation of the exact same simulation: same Bounce world, same
+   walls, same five sport-ball families, same compound-shape mannequin,
+   same pointer-push and respawn behavior. The only thing it can't do is
+   screen-space global illumination — to compensate it baked a procedural
+   `RoomEnvironment` through `PMREMGenerator` (so `MeshPhysicalMaterial`
+   picks up image-based lighting on every surface) and adds a soft
+   hemisphere + ambient pair on top of the original mouse-tracking
+   shadow-casting `PointLight`. Visually it reads as a slightly less
+   moody version of the WebGPU pipeline, but the simulation itself is
+   bit-for-bit identical.
+3. **WebGL also unavailable** (very old browsers, headless environments,
+   in-app webviews with broken GL contexts) — the WebGL component itself
+   falls back to the shared `<VibeFallback />` square so the playground
+   card always occupies the same footprint and the page never errors.
+
+`SportArenaWebGL` is also exported on its own from
+[`./index.ts`](./index.ts), so callers that already know they want the
+cheaper WebGL path (e.g., a low-power-mode toggle) can mount it directly
+without going through the WebGPU detection at all.
 
 ## Interaction
 
@@ -83,7 +106,9 @@ the playground card stays the same size and the page never errors.
 - `prefers-reduced-motion` pauses physics integration and impulse pushes.
 - The mounted `<div>` carries `role="img"` with an `aria-label` listing
   the sport-ball mix and the mannequin.
-- A `<VibeFallback>` square renders for browsers without WebGPU support.
+- Browsers without WebGPU automatically downgrade to the WebGL companion
+  (`<SportArenaWebGL />`); browsers without WebGL get the static
+  `<VibeFallback>` square.
 
 ## Why "heavy JS"
 

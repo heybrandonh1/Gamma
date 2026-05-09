@@ -25,7 +25,7 @@ import {
   type SportBallSpec,
 } from "./sport-balls";
 import { buildMannequin, type Mannequin } from "./mannequin";
-import { VibeFallback } from "../_shared/vibe-fallback";
+import { SportArenaWebGL } from "./sport-arena-webgl";
 
 /**
  * SSGI Sport Arena — a 1:1 port of the WebGPU SSGI Ball Pool example
@@ -706,7 +706,19 @@ export function SportArena({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (failed) return <VibeFallback aspectRatio={aspectRatio} className={className} />;
+  // Cascade when WebGPU is unavailable or its init throws: render the
+  // WebGL companion instead of a static square. The WebGL component
+  // itself falls back to `<VibeFallback />` if WebGL is also unavailable
+  // (older browsers, headless environments, in-app webviews with broken
+  // GL contexts), so the cascade is WebGPU → WebGL → static square.
+  if (failed)
+    return (
+      <SportArenaWebGL
+        reduceMotion={reduceMotion}
+        aspectRatio={aspectRatio}
+        className={className}
+      />
+    );
 
   return (
     <div
