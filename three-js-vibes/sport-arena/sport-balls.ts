@@ -72,7 +72,7 @@ const COMMON_PHYSICAL = {
 /**
  * Cream sphere + figure-8 red stitch curve (parametric great-circle with
  * latitude oscillating as a sine of double-longitude — same trick used in
- * the existing `logo-forge` baseball, just baked into a single merged
+ * the existing `sport-ball-morpher` baseball, just baked into a single merged
  * geometry so we can instance it).
  */
 export function buildBaseballSpec(): SportBallSpec {
@@ -220,9 +220,9 @@ export function buildBasketballSpec(): SportBallSpec {
  * the resulting 60 vertices onto a sphere. Pentagons map to material[0]
  * (black panels), hexagons to material[1] (white panels).
  *
- * Same construction as `logo-forge/mesh-builders.ts` — duplicated here so
+ * Same construction as `sport-ball-morpher/mesh-builders.ts` — duplicated here so
  * this vibe stays self-contained and we can tweak the radius / shading
- * without affecting Logo Forge.
+ * without affecting Sport Ball Morpher.
  */
 function buildTruncatedIcosahedronGeometry(
   radius: number,
@@ -400,7 +400,7 @@ export function buildSoccerBallSpec(): SportBallSpec {
  * football lives in one buffer with two material groups (leather + laces).
  */
 export function buildFootballSpec(): SportBallSpec {
-  // Build prolate spheroid by deforming a sphere — same recipe as logo-forge
+  // Build prolate spheroid by deforming a sphere — same recipe as sport-ball-morpher
   // but with a smaller base radius so the long axis fits the box height.
   const baseRadius = 0.32;
   const ballGeo = new THREE.SphereGeometry(baseRadius, 32, 24);

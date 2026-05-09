@@ -23,7 +23,7 @@ mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
     perpendicular great circle, two ±45° great circles). Two material
     groups (skin, seam).
   - `buildSoccerBallSpec`: real **truncated icosahedron** (12 pentagons +
-    20 hexagons) — same construction as Logo Forge but baked into a
+    20 hexagons) — same construction as Sport Ball Morpher but baked into a
     self-contained spec for instancing. Two material groups (black panels,
     white panels).
   - `buildFootballSpec`: prolate spheroid (sphere stretched on z + tip

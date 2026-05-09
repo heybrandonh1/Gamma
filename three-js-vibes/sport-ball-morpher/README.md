@@ -1,9 +1,10 @@
-# Logo Forge
+# Sport Ball Morpher
 
 A 3D showcase of six procedural sport-equipment meshes — baseball, bat,
 basketball, football, soccer ball, hockey puck — that auto-cycle on a lit
-stage with crossfade transitions. The user can grab the canvas and freely
-orbit the camera 360° to inspect the active object from any angle.
+stage with a jelly-style squash/stretch morph between each one. The user can
+grab the canvas and freely orbit the camera 360° to inspect the active object
+from any angle.
 
 Lives inside the [Gamma](https://github.com/heybrandonh1/Gamma) submodule and
 mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
@@ -29,14 +30,19 @@ mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
     hexagons white via geometry face groups.
   - `buildHockeyPuck`: short `CylinderGeometry` body + a thin sleeve cylinder
     around the rim suggesting the embossed brand band, laid on its side.
-- `show-controller.ts` — owns the cycle. GSAP-tweens opacity (via the
-  `setOpacity` callback so multi-material soccer-ball faces all fade in
-  lockstep), scale with a back-out overshoot, and crossfades the rim
-  point-light color per active sport.
-- `logo-forge.tsx` — React component. Sets up the renderer, scene, camera,
-  and lighting; generates a PMREM cubemap from `RoomEnvironment` so all
-  `MeshStandardMaterial` surfaces pick up real image-based lighting; wires
-  `OrbitControls` for free 360° drag-to-rotate (zoom + pan disabled).
+- `show-controller.ts` — owns the cycle. Instead of fading meshes out + in
+  separately, the controller drives a **jelly squash/stretch morph**: the
+  outgoing mesh squishes flat into a shared "puddle" pose (non-uniform scale
+  ~ `(1.55, 0.18, 1.55)`) while crossfading opacity, and the incoming mesh
+  emerges from that same puddle pose with `elastic.out` easing so it bounces
+  back to its full scale like a blob of jelly springing into shape. Both
+  meshes are visible during the morph window, so the transition reads as
+  one shape squishing into the next rather than one disappearing and another
+  appearing. The rim point-light tint crossfades in lockstep.
+- `sport-ball-morpher.tsx` — React component. Sets up the renderer, scene,
+  camera, and lighting; generates a PMREM cubemap from `RoomEnvironment` so
+  all `MeshStandardMaterial` surfaces pick up real image-based lighting;
+  wires `OrbitControls` for free 360° drag-to-rotate (zoom + pan disabled).
 
 ## Realism: PMREM environment
 

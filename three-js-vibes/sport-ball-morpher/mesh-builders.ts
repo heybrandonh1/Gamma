@@ -15,7 +15,7 @@ import * as THREE from "three";
  * Realism notes: surface detail (baseball stitches, basketball seams, football
  * laces, soccer-ball panels, hockey-puck rim band) is procedural — no textures,
  * no external assets. Combined with the `RoomEnvironment` PMREM-generated IBL
- * the scene applies in `logo-forge.tsx`, MeshStandardMaterial picks up real
+ * the scene applies in `sport-ball-morpher.tsx`, MeshStandardMaterial picks up real
  * reflections and these objects read as actual physical balls / equipment.
  */
 

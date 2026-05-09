@@ -21,7 +21,7 @@ import {
 } from "./show-controller";
 import { VibeFallback } from "../_shared/vibe-fallback";
 
-export interface LogoForgeProps {
+export interface SportBallMorpherProps {
   /** Pause the cycle and rotation when true. */
   reduceMotion?: boolean | null;
   /** CSS aspect-ratio for the canvas wrapper. Defaults to "1 / 0.72". */
@@ -42,11 +42,11 @@ function hasWebGL(): boolean {
   }
 }
 
-export function LogoForge({
+export function SportBallMorpher({
   reduceMotion,
   aspectRatio = "1 / 0.72",
   className,
-}: LogoForgeProps) {
+}: SportBallMorpherProps) {
   const mountRef = useRef<HTMLDivElement>(null);
   const reduceMotionRef = useRef(reduceMotion ?? false);
   const controllerRef = useRef<ShowController | null>(null);
@@ -83,7 +83,7 @@ export function LogoForge({
         powerPreference: "high-performance",
       });
     } catch (err) {
-      console.error("[logo-forge] WebGL init failed:", err);
+      console.error("[sport-ball-morpher] WebGL init failed:", err);
       setFailed(true);
       return;
     }
