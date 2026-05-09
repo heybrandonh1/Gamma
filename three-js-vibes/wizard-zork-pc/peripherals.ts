@@ -25,7 +25,17 @@ import * as THREE from "three";
  *     of the mouse, lifts a few centimetres above the table mid-run
  *     (so it reads as cable stiffness rather than a straight line),
  *     and lands at a small port plug glued to the lower-left side of
- *     the tower.
+ *     the tower. Rebuilt each frame so it follows the mouse end as
+ *     it floats.
+ *
+ * Float-and-settle animation:
+ *   On a long ~11 s cycle, the keyboard and mouse drift straight up
+ *   off the table (peak ~7 cm), hover with a tiny waver as if held
+ *   by an invisible hand, and then sink back down to rest — the way
+ *   a witch absent-mindedly possesses the desk between commands.
+ *   The mouse lags a beat behind the keyboard so they don't lift in
+ *   lockstep, and both pin to their resting pose under
+ *   `prefers-reduced-motion`.
  */
 
 export interface Peripherals {
@@ -122,6 +132,13 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
   keyboard.rotation.x = 0.085;
   group.add(keyboard);
 
+  // Cache the keyboard's resting pose. The float animation in `tick`
+  // adds offsets on top of these values and snaps back to them when
+  // reduce-motion is on.
+  const keyboardRestY = keyboard.position.y;
+  const keyboardRestX = keyboard.position.x;
+  const keyboardRestRotX = keyboard.rotation.x;
+
   const trayBaseGeo = track(new THREE.BoxGeometry(trayW, trayBaseH, trayD));
   const trayBase = new THREE.Mesh(trayBaseGeo, trayMat);
   trayBase.position.set(0, trayBaseH / 2, 0);
@@ -209,6 +226,12 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
   mouse.rotation.y = -0.18;
   group.add(mouse);
 
+  // Mouse resting pose, same idea as the keyboard's cache — the float
+  // animation modulates around these.
+  const mouseRestY = mouse.position.y;
+  const mouseRestX = mouse.position.x;
+  const mouseRestRotY = mouse.rotation.y;
+
   // Body: a half-sphere stretched along Z into a teardrop. Scaling
   // a sphere is cheaper than authoring a custom geometry and reads
   // identically once the chassis material catches the candles.
@@ -237,30 +260,47 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
   mouse.add(wheel);
 
   // ----- cable: mouse -> tower ---------------------------------------
-  // Compute the cable start in PC-local space by rotating the
-  // mouse-back offset (which lives in mouse-local space) through the
-  // mouse's yaw and adding the mouse's local position.
-  const mouseBackLocal = new THREE.Vector3(0, 0.06, -0.13);
-  mouseBackLocal.applyEuler(mouse.rotation);
-  const cableStart = mouse.position.clone().add(mouseBackLocal);
+  // Curve control points are kept in a mutable array so the cable
+  // can be rebuilt each frame as the mouse floats up and back down.
+  // Allocating once and mutating in place keeps the float animation
+  // out of the GC's way.
+  const CABLE_BACK_OFFSET = new THREE.Vector3(0, 0.06, -0.13);
+  const cableStart = new THREE.Vector3();
+  const cableMidA = new THREE.Vector3();
+  const cableMidB = new THREE.Vector3();
   const cableEnd = towerCablePort.clone();
-
-  // Two intermediate control points lift the cable a few cm above
-  // the table so it reads as a stiff PS/2-era cable rather than a
-  // straight line laid flat on the wood. Tension 0.5 keeps the curve
-  // smooth without overshooting back below the table.
-  const cableMidA = cableStart.clone().lerp(cableEnd, 0.35);
-  cableMidA.y = Math.max(cableStart.y, cableEnd.y) + 0.06;
-  const cableMidB = cableStart.clone().lerp(cableEnd, 0.7);
-  cableMidB.y = Math.max(cableStart.y, cableEnd.y) + 0.04;
-
-  const curve = new THREE.CatmullRomCurve3(
-    [cableStart, cableMidA, cableMidB, cableEnd],
+  const cablePoints: THREE.Vector3[] = [
+    cableStart,
+    cableMidA,
+    cableMidB,
+    cableEnd,
+  ];
+  const cableCurve = new THREE.CatmullRomCurve3(
+    cablePoints,
     false,
     "catmullrom",
     0.5,
   );
-  const cableGeo = track(new THREE.TubeGeometry(curve, 48, 0.012, 8, false));
+  const _scratchBack = new THREE.Vector3();
+
+  // Recomputes the cable's four control points based on the mouse's
+  // current pose. Two intermediate points sit a few cm above the
+  // start/end so the cable reads as a stiff PS/2-era cable rather
+  // than a slack line — and so the arc lifts naturally with the
+  // mouse when the witch picks it up.
+  function updateCablePoints(): void {
+    _scratchBack.copy(CABLE_BACK_OFFSET).applyEuler(mouse.rotation);
+    cableStart.copy(mouse.position).add(_scratchBack);
+    cableMidA.lerpVectors(cableStart, cableEnd, 0.35);
+    cableMidA.y = Math.max(cableStart.y, cableEnd.y) + 0.06;
+    cableMidB.lerpVectors(cableStart, cableEnd, 0.7);
+    cableMidB.y = Math.max(cableStart.y, cableEnd.y) + 0.04;
+  }
+
+  updateCablePoints();
+  // Cable geometry is *not* added to `disposables` because the float
+  // animation swaps it out each frame. The latest mesh.geometry is
+  // disposed explicitly in this subsystem's own `dispose()`.
   const cableMat = track(
     new THREE.MeshStandardMaterial({
       color: new THREE.Color("#c8b889"),
@@ -268,43 +308,143 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
       metalness: 0.04,
     }),
   );
-  const cable = new THREE.Mesh(cableGeo, cableMat);
+  const cable = new THREE.Mesh(
+    new THREE.TubeGeometry(cableCurve, 48, 0.012, 8, false),
+    cableMat,
+  );
   group.add(cable);
 
   // Small port plug glued to the tower at the cable's endpoint so
   // the tube doesn't visually disappear into a flat plastic face.
+  // The plug stays put while the cable end at the mouse animates.
   const plugGeo = track(new THREE.CylinderGeometry(0.022, 0.022, 0.04, 12));
   const plug = new THREE.Mesh(plugGeo, trayDarkMat);
   plug.position.copy(cableEnd);
-  // Orient the plug along the cable's incoming tangent so it reads
-  // as a connector, not a coin glued to the side of the tower.
-  const tangent = curve.getTangent(1).normalize();
+  const initialTangent = cableCurve.getTangent(1).normalize();
   const up = new THREE.Vector3(0, 1, 0);
-  const q = new THREE.Quaternion().setFromUnitVectors(up, tangent);
+  const q = new THREE.Quaternion().setFromUnitVectors(up, initialTangent);
   plug.quaternion.copy(q);
   group.add(plug);
 
+  // ----- float-and-settle animation ----------------------------------
+  // Witch's possession: every ~11 s the keyboard and mouse drift
+  // straight up off the table, hover with a tiny waver, then sink
+  // back down and rest. The mouse runs the same cycle a beat behind
+  // the keyboard so they don't lift in lockstep.
+  //
+  // Numbers are deliberately small — a 7 cm peak lift in a scene
+  // whose camera sits ~5 units away reads as "subtle hover" rather
+  // than "object launching" when paired with the slow easing.
+  const FLOAT_PEAK = 0.07;
+  const FLOAT_PERIOD = 11.0;
+  const MOUSE_PHASE_LAG = 0.6 / FLOAT_PERIOD;
+
+  function smoothstep01(x: number): number {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    return x * x * (3 - 2 * x);
+  }
+
+  // Phase profile (one full loop, [0..1]):
+  //   0.00..0.12  — at rest on the table
+  //   0.12..0.42  — rise (smoothstep)
+  //   0.42..0.58  — hover at peak with a faint bob
+  //   0.58..0.88  — descend (smoothstep)
+  //   0.88..1.00  — at rest on the table
+  //
+  // The 4 mm hover bob is multiplied by `base / FLOAT_PEAK` so it
+  // fades in as the items rise and fades out as they descend —
+  // otherwise the boundary between rise/hover and hover/descend
+  // would pop by up to ±4 mm in a single frame.
+  function liftAt(phase: number, t: number, bobSeed: number): number {
+    let base = 0;
+    if (phase < 0.12 || phase > 0.88) base = 0;
+    else if (phase < 0.42)
+      base = smoothstep01((phase - 0.12) / 0.30) * FLOAT_PEAK;
+    else if (phase < 0.58) base = FLOAT_PEAK;
+    else base = smoothstep01((0.88 - phase) / 0.30) * FLOAT_PEAK;
+    const bob = Math.sin(t * 1.4 + bobSeed) * 0.004 * (base / FLOAT_PEAK);
+    return base + bob;
+  }
+
   let reduced = false;
+
+  function settleToRest(): void {
+    keyboard.position.x = keyboardRestX;
+    keyboard.position.y = keyboardRestY;
+    keyboard.rotation.x = keyboardRestRotX;
+    keyboard.rotation.z = 0;
+    mouse.position.x = mouseRestX;
+    mouse.position.y = mouseRestY;
+    mouse.rotation.y = mouseRestRotY;
+    mouse.rotation.z = 0;
+    updateCablePoints();
+    cable.geometry.dispose();
+    cable.geometry = new THREE.TubeGeometry(cableCurve, 48, 0.012, 8, false);
+  }
 
   return {
     object: group,
     setReducedMotion(v: boolean) {
       reduced = v;
-      if (reduced) ledMat.emissiveIntensity = 1.2;
+      if (reduced) {
+        ledMat.emissiveIntensity = 1.2;
+        // Snap everything back to the table and pin the cable so
+        // there's no implicit motion under prefers-reduced-motion.
+        settleToRest();
+      }
     },
     tick(_delta: number) {
-      // Phase-shift the breathe so the keyboard LED isn't perfectly
-      // synced with the tower's — keeps the desk from looking like
-      // one strobing unit.
       if (reduced) {
         ledMat.emissiveIntensity = 1.2;
         return;
       }
       const t = performance.now() / 1000;
+
+      // Phase-shift the breathe so the keyboard LED isn't perfectly
+      // synced with the tower's — keeps the desk from looking like
+      // one strobing unit.
       ledMat.emissiveIntensity = 1.0 + 0.2 * Math.sin(t * 1.2 + 0.6);
+
+      const kbPhase = ((t / FLOAT_PERIOD) % 1 + 1) % 1;
+      const msPhase =
+        ((t / FLOAT_PERIOD - MOUSE_PHASE_LAG) % 1 + 1) % 1;
+      const kbLift = liftAt(kbPhase, t, 0);
+      const msLift = liftAt(msPhase, t, 1.3);
+      const kbAir = kbLift / FLOAT_PEAK;
+      const msAir = msLift / FLOAT_PEAK;
+
+      // Position: straight-up lift, with a millimetre of lateral
+      // drift while airborne so the items don't look bolted to an
+      // invisible elevator.
+      keyboard.position.y = keyboardRestY + kbLift;
+      keyboard.position.x =
+        keyboardRestX + Math.sin(t * 0.35) * 0.012 * kbAir;
+      mouse.position.y = mouseRestY + msLift;
+      mouse.position.x = mouseRestX + Math.sin(t * 0.42 + 1.7) * 0.010 * msAir;
+
+      // Rotation wobble — only while airborne, fades to zero on the
+      // way back down so the items lock cleanly back to their
+      // resting yaw / tilt before touching down.
+      keyboard.rotation.x =
+        keyboardRestRotX + Math.sin(t * 0.55) * 0.025 * kbAir;
+      keyboard.rotation.z = Math.sin(t * 0.7 + 0.4) * 0.020 * kbAir;
+      mouse.rotation.y =
+        mouseRestRotY + Math.sin(t * 0.5 + 1.2) * 0.06 * msAir;
+      mouse.rotation.z = Math.sin(t * 0.65 + 0.2) * 0.04 * msAir;
+
+      // Cable follows the mouse end. A 4-point CatmullRom curve at
+      // 48 longitudinal segments x 8 radial = ~400 vertices — cheap
+      // to rebuild every frame, simpler than mutating the existing
+      // BufferAttributes in place because TubeGeometry has to
+      // recompute Frenet frames on the new path anyway.
+      updateCablePoints();
+      cable.geometry.dispose();
+      cable.geometry = new THREE.TubeGeometry(cableCurve, 48, 0.012, 8, false);
     },
     dispose() {
       for (const d of disposables) d.dispose();
+      cable.geometry.dispose();
     },
   };
 }
