@@ -1,6 +1,6 @@
 # Sport Ball Morpher
 
-A 3D showcase of six procedural sport-equipment shapes — baseball, bat,
+A 3D showcase of five procedural sport-equipment shapes — baseball,
 basketball, football, soccer ball, hockey puck — that auto-cycle on a lit
 stage as **one continuously morphing mass**. Nothing crossfades, nothing
 disappears; the body smoothly molds from each sport into the next with its
@@ -9,10 +9,15 @@ on a single per-vertex blend, like a lava lamp where each blob remembers
 how to be a baseball or a football.
 
 The viewer can grab the canvas and freely orbit the camera 360° to inspect
-the active object from any angle, and **click anywhere on the body to poke
-it with a wavy multi-frequency jello wobble** — three desynchronised damped
-sine terms ride the surface for a couple of seconds, so different parts of
-the body bob at slightly different times the way real jelly does.
+the active object from any angle. Two ways to play with the surface:
+
+- **Hover** the cursor over the body and the surface ripples like you're
+  moving your hand through water — a continuous multi-frequency wave
+  follows the cursor and stays at full strength for as long as the
+  pointer is on the body. Move the cursor off and the ripples decay
+  away naturally.
+- **Click** any specific spot on the body to splash it with a stronger
+  impulse wave that decays out over ~1.5 seconds.
 
 Lives inside the [Gamma](https://github.com/heybrandonh1/Gamma) submodule
 and mounts in Project Alpha's `/playground` page via
@@ -81,13 +86,12 @@ There is exactly **one mesh in the scene** at all times. There is no
 opacity crossfade, no overlapping silhouette pair, no separate decoration
 layer fading in or out. The morph is the entire transition.
 
-## Wavy jello
+## Wavy jello — two trigger modes, one wave
 
-Click the body and the vertex shader layers a damped multi-frequency
-wave on top of the morphed position:
+The vertex shader layers a multi-frequency wave on top of the morphed
+position:
 
     if (uJiggleAmp > 0.0) {
-      float decay  = exp(-uJiggleTime * 1.8);
       float dist   = length(transformed - uJiggleCenter);
       float radial = exp(-dist * 0.5);
 
@@ -95,25 +99,44 @@ wave on top of the morphed position:
                  + 0.30 * cos(uJiggleTime * 12.0 - dist * 5.5)
                  + 0.18 * cos(uJiggleTime * 18.0 - dist * 9.5);
 
-      float disp = uJiggleAmp * decay * radial * wave;
+      float disp = uJiggleAmp * radial * wave;
       transformed += aDirection * disp;
 
       // whole-body breathing pulse
-      transformed *= 1.0 + uJiggleAmp * decay * cos(uJiggleTime * 6.0) * 0.18;
+      transformed *= 1.0 + uJiggleAmp * cos(uJiggleTime * 6.0) * 0.14;
     }
 
 The three sine terms tick at 8, 12, and 18 rad/s with progressively
-shorter spatial wavelengths, so they go in and out of phase across the
-~2.8 s decay window — the silhouette ripples in waves that don't repeat
-themselves, the way real jelly behaves when you poke it.
+shorter spatial wavelengths, so they go in and out of phase across
+their lifetime — the silhouette ripples in waves that don't repeat
+themselves, the way real jelly behaves.
 
-The poke center is computed in the host component by raycasting against
-the rest sphere (the body mesh's `position` attribute is still the unit
-sphere — the morph happens in the shader), normalizing the hit to a unit
-direction, then projecting that direction onto the *current morphed
-surface* using a CPU mirror of the same `mix(distA, distB,
-smoothstep(uBlend))` formula. The wave radiates outward from where the
-user actually clicked even mid-morph.
+Crucially there is **no time-based decay term in the GLSL**.
+`uJiggleAmp` is the only amplitude knob. JS owns its lifecycle, which
+gives us two clean trigger modes that share the same shader path:
+
+- **Click impulse** — `pokeJiggle` sets amp to its peak and
+  `tickJiggle` exponential-decays it over ~1.5 s. Time keeps
+  advancing the whole time so the ripple animates as it dies down.
+- **Hover sustain** — `sustainJiggle` smoothly ramps amp toward the
+  hover hold value and pins it there as long as the host keeps
+  calling it (every animation frame the cursor is over the body),
+  *while still updating the wave center to follow the cursor*.
+  When the host stops calling sustain, `tickJiggle` takes back over
+  and the wave decays out as if it were an impulse mid-flight.
+
+The cursor → surface mapping happens on the JS side: the host
+component intersects the camera's pick ray with the body's rest unit
+sphere in body-local coordinates (so the auto-spinning body doesn't
+throw it off), then projects the unit hit direction onto the *current
+morphed* surface using a CPU mirror of the same `mix(distA, distB,
+smoothstep(uBlend))` blend the vertex shader runs. The wave's center
+is therefore exactly on the visible silhouette — even mid-morph, even
+while the body is rotating, even while the camera is being dragged.
+
+We re-project on every animation frame, not just on `pointermove`, so
+the wave stays under the cursor instead of sliding across the surface
+as the body spins beneath it.
 
 ## Anatomy
 
@@ -161,17 +184,20 @@ with the geometry.
 
 - **Drag** anywhere on the canvas to rotate the camera 360° in any
   direction.
-- **Click** any specific part of the body to poke it — a damped
-  multi-frequency wave radiates from the click point, wobbles outward,
-  and settles back to rest in about three seconds. Drags are
-  disambiguated from clicks by pointer travel distance (≤ 6 px) and
-  press duration (≤ 350 ms), so orbiting and poking don't fight each
-  other.
+- **Hover** the body and a sustained "hand in water" multi-frequency
+  ripple follows the cursor at full strength. The wave smoothly ramps
+  on when the cursor first lands on the body and gracefully decays
+  out when the cursor leaves.
+- **Click** any specific spot on the body to splash it with a stronger
+  impulse — the wave radiates from the click point and decays out over
+  ~1.5 s. Drags are disambiguated from clicks by pointer travel
+  distance (≤ 6 px) and press duration (≤ 350 ms), so orbiting and
+  poking don't fight each other.
 - **Pinch / scroll** is disabled (this is an inspection view, not a
   flythrough).
-- The body auto-spins on the active sport's natural axis (bat along Y,
-  football along Z, puck along X) at the active sport's speed; the
-  orbit camera is independent.
+- The body auto-spins on the active sport's natural axis (football
+  along Z, puck along X, the rest along Y) at the active sport's
+  speed; the orbit camera is independent.
 - The cycle auto-advances every ~2.4 s + ~1.8 s morph.
   `prefers-reduced-motion` pauses it.
 

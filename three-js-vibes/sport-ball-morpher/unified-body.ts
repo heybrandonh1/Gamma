@@ -3,6 +3,7 @@ import * as THREE from "three";
 import {
   createJiggleUniforms,
   pokeJiggle,
+  sustainJiggle,
   tickJiggle,
   type JiggleUniforms,
 } from "./jiggle";
@@ -78,12 +79,31 @@ export interface UnifiedSportBody {
   cycleAndLoad(nextSportIndex: number): void;
   /**
    * Project a click on the rest sphere onto the actual morphed surface
-   * and trigger a wavy-jello wobble centered there. `localPoint` is in
-   * the mesh's local space (typically derived from a raycast hit
-   * `point` passed through `worldToLocal`).
+   * and trigger an impulse wavy-jello wobble centered there.
+   * `localPoint` is in the mesh's local space (typically derived from
+   * a raycast hit `point` passed through `worldToLocal`).
    */
   poke(localPoint: THREE.Vector3, amp?: number): void;
-  /** Step the wobble's time uniform forward and decay its amplitude. */
+  /**
+   * Hold a sustained "hand in water" wobble centered at `localPoint`.
+   * Call every frame the cursor is over the body. The amplitude
+   * smoothly ramps up from rest and stays pinned at the sustain
+   * level, so the surface keeps rippling at full strength as long as
+   * the host keeps calling this. Updates the wave center on every
+   * call so the wave follows the cursor.
+   */
+  setHover(localPoint: THREE.Vector3): void;
+  /**
+   * Drop the sustain hold — the wave amplitude resumes its normal
+   * exponential decay and the wave dies out naturally. Cheap to call
+   * (idempotent), so the host can call it every frame the cursor is
+   * not over the body without worrying about state tracking.
+   */
+  clearHover(): void;
+  /**
+   * Step the wobble's time uniform forward. While hover is active,
+   * pin the amplitude at the sustain level; otherwise decay it.
+   */
   tick(dt: number): void;
   /** Update the rim-light tint to match the *currently displayed* blend. */
   blendedRimColor(out: THREE.Color): THREE.Color;
@@ -252,18 +272,23 @@ vec3 transformed = mix(aPosA, aPosB, morphT);
 
 // Wavy-jello wobble layered on the morphed position.
 //
-// Three desynchronised damped sine terms ride out at decreasing
-// amplitude and decreasing spatial wavelength. The terms tick at 8,
-// 12, 18 rad/s respectively, so they go in and out of phase over the
-// ~2.8 s decay window — the silhouette ripples in waves that don't
-// repeat themselves, the way real jelly behaves when you poke it.
+// Three desynchronised sine terms ride at decreasing amplitude and
+// decreasing spatial wavelength. The terms tick at 8, 12, 18 rad/s
+// respectively, so they go in and out of phase over the ~2 s impulse
+// window (or indefinitely under hover sustain) — the silhouette
+// ripples in waves that don't repeat themselves, the way real jelly
+// behaves when you poke it / drag your hand through water.
+//
+// Note there is no time-based decay term in the GLSL: \`uJiggleAmp\`
+// is the only amplitude knob, and JS owns its decay (impulse mode)
+// or its hold (hover sustain). That keeps the shader oblivious to
+// which trigger fired the wobble — both modes share one display path.
 //
 // The radial spatial falloff (\`exp(-dist · 0.5)\`) keeps the wave
-// concentrated around the click point; the breathing pulse on the
+// concentrated around the wave center; the breathing pulse on the
 // last line is a whole-body radial scale that registers in the
 // silhouette so the impact reads from any camera angle.
 if (uJiggleAmp > 0.0) {
-  float decay = exp(-uJiggleTime * 1.8);
   float dist = length(transformed - uJiggleCenter);
   float radial = exp(-dist * 0.5);
 
@@ -271,12 +296,13 @@ if (uJiggleAmp > 0.0) {
              + 0.30 * cos(uJiggleTime * 12.0 - dist * 5.5)
              + 0.18 * cos(uJiggleTime * 18.0 - dist * 9.5);
 
-  float disp = uJiggleAmp * decay * radial * wave;
+  float disp = uJiggleAmp * radial * wave;
   transformed += aDirection * disp;
 
   // Whole-body breathing pulse, slower than every ripple term so it
-  // shows up as the global "I just got poked" silhouette heave.
-  float pulse = uJiggleAmp * decay * cos(uJiggleTime * 6.0) * 0.18;
+  // shows up as a global silhouette heave that reads from any
+  // camera angle.
+  float pulse = uJiggleAmp * cos(uJiggleTime * 6.0) * 0.14;
   transformed *= 1.0 + pulse;
 }
 
@@ -311,6 +337,14 @@ varying vec3 vMorphedNormal;`,
   // frustum culling so the morphed shape stays on screen even at
   // extreme blends.
   mesh.frustumCulled = false;
+
+  // Hover sustain state. Lives in the body (rather than externally) so
+  // `tick` can cleanly route between sustain mode (pin amp at hover
+  // target, advance time) and decay mode (let amp exponential-decay,
+  // advance time). The host updates these every animation frame from
+  // the cursor's projection on the morphed surface.
+  let hoverActive = false;
+  const hoverPoint = new THREE.Vector3();
 
   /** Re-blend the material's PBR scalars from slot A and slot B's values. */
   function refreshMaterialTunings(): void {
@@ -354,10 +388,27 @@ varying vec3 vMorphedNormal;`,
       refreshMaterialTunings();
     },
     poke(localPoint, amp = 0.22) {
+      // A click impulse takes priority over any active hover sustain
+      // — the two share the same uniforms, so a fresh poke would
+      // immediately get overwritten on the next sustain frame
+      // anyway. We keep `hoverActive` as-is so the hover state
+      // resumes once the impulse is gone (in practice the user
+      // usually clicks while hovering, then keeps hovering).
       pokeJiggle(jiggle, localPoint, amp);
     },
+    setHover(localPoint) {
+      hoverActive = true;
+      hoverPoint.copy(localPoint);
+    },
+    clearHover() {
+      hoverActive = false;
+    },
     tick(dt) {
-      tickJiggle(jiggle, dt);
+      if (hoverActive) {
+        sustainJiggle(jiggle, hoverPoint, dt);
+      } else {
+        tickJiggle(jiggle, dt);
+      }
     },
     blendedRimColor(out) {
       const a = new THREE.Color(sports[slotA].rimColor);

@@ -47,8 +47,17 @@ export interface ShowController {
   update(deltaSeconds: number): void;
   setReducedMotion(reduced: boolean): void;
   onFrameSettled(cb: (index: number, sport: SportSpec) => void): () => void;
-  /** Trigger a click-to-jello wobble centered at `localPoint`. */
+  /** Trigger a click-to-jello impulse wobble centered at `localPoint`. */
   poke(localPoint: THREE.Vector3, amp?: number): void;
+  /**
+   * Hold a hover-sustain wave centered at `localPoint`. Call every
+   * animation frame the cursor is over the body — the body smoothly
+   * ramps the wobble up and keeps it pinned at the hover amplitude
+   * until {@link releaseHover} runs.
+   */
+  hold(localPoint: THREE.Vector3): void;
+  /** Release the hover hold; the wave resumes its natural decay. */
+  releaseHover(): void;
   /**
    * Current "incoming" sport's index — what slot B holds. The host
    * component uses this to compute the actual morphed surface point
@@ -161,6 +170,14 @@ export function createShowController(
     poke(localPoint, amp) {
       if (disposed) return;
       body.poke(localPoint, amp);
+    },
+    hold(localPoint) {
+      if (disposed) return;
+      body.setHover(localPoint);
+    },
+    releaseHover() {
+      if (disposed) return;
+      body.clearHover();
     },
     update(deltaSeconds: number) {
       const axis = body.currentSpinAxis();

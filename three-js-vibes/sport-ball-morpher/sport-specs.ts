@@ -3,7 +3,6 @@ import * as THREE from "three";
 import {
   makeCylinderDist,
   makeFootballDist,
-  makeLatheDist,
   makeSphereDist,
   type SurfaceDistanceFn,
 } from "./surface-distance";
@@ -54,7 +53,6 @@ export interface SportSpec {
 const C = {
   baseballBody: new THREE.Color(0xfaf6ed),
   baseballStitch: new THREE.Color(0xc62a25),
-  bat: new THREE.Color(0xc89668),
   basketballBody: new THREE.Color(0xd35221),
   basketballSeam: new THREE.Color(0x2a160c),
   footballBody: new THREE.Color(0x6c3a1b),
@@ -120,25 +118,6 @@ function baseballColor(dx: number, dy: number, dz: number, out: THREE.Color): vo
   const nearSeam = Math.exp(-(ang * ang) / 0.0035);
   const stitch = nearSeam * (0.55 + 0.45 * stitchPulse);
   out.copy(C.baseballBody).lerp(C.baseballStitch, Math.min(1, stitch));
-}
-
-// ---------- bat -------------------------------------------------------------
-
-const BAT_PROFILE: [number, number][] = [
-  [0.0, -1.4],
-  [0.18, -1.4],
-  [0.18, -1.32],
-  [0.10, -1.28],
-  [0.10, -0.85],
-  [0.13, -0.45],
-  [0.20, 0.25],
-  [0.25, 1.05],
-  [0.22, 1.32],
-  [0.0, 1.42],
-];
-
-function batColor(_dx: number, _dy: number, _dz: number, out: THREE.Color): void {
-  out.copy(C.bat);
 }
 
 // ---------- basketball ------------------------------------------------------
@@ -310,18 +289,6 @@ export const SPORT_SPECS: SportSpec[] = [
     roughness: 0.62,
     metalness: 0.05,
     envMapIntensity: 0.85,
-  },
-  {
-    key: "bat",
-    name: "Bat",
-    surfaceDist: makeLatheDist(BAT_PROFILE),
-    colorAt: batColor,
-    rimColor: "#e6c089",
-    spinAxis: "y",
-    spinSpeed: 0.6,
-    roughness: 0.55,
-    metalness: 0.05,
-    envMapIntensity: 0.9,
   },
   {
     key: "basketball",
