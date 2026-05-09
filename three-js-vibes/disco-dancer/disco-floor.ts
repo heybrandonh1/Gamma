@@ -1,35 +1,33 @@
 import * as THREE from "three";
 
 /**
- * Subtle disco floor: a TILES_PER_SIDE × TILES_PER_SIDE grid of square panels.
- * Each tile owns its own MeshStandardMaterial so we can lerp its emissive
- * color independently for the slow shimmer effect.
+ * Disco floor: a TILES_PER_SIDE × TILES_PER_SIDE grid of square panels. Each
+ * tile owns its own MeshStandardMaterial so we can lerp its emissive color
+ * independently for the shimmer effect.
  *
- * "Subtle" is doing a lot of work here:
- *   - emissive intensity capped at ~0.22
- *   - palette is pastel only (no saturated rave colors)
- *   - per-tile phase is randomized so the floor reads as a slow shimmer
- *     rather than a hard strobe
+ * Tuned to read as a vibrant club floor against the new light card bg —
+ * saturated party hues with a moderately strong emissive cap, but per-tile
+ * phase randomization keeps it from strobing.
  */
 
 const TILES_PER_SIDE = 16;
 const TILE_SIZE = 80;
 
 /**
- * Six pastel hues. Picked to look reasonable in both light and dark page
- * backgrounds and to alternate cleanly without clashing with the gold key
- * or pink party hat.
+ * Six saturated party hues. Match the club-light and confetti palettes so
+ * the whole scene reads as one coherent set of colors rather than three
+ * unrelated rainbows.
  */
 const PALETTE: number[] = [
-  0xfecaca, // rose 100
-  0xfde68a, // amber 100
-  0xa7f3d0, // emerald 100
-  0xbfdbfe, // blue 100
-  0xddd6fe, // violet 100
-  0xfbcfe8, // pink 100
+  0xff3366, // hot pink
+  0xff9933, // tangerine
+  0xffd633, // sunshine yellow
+  0x33ff99, // electric mint
+  0x33ccff, // cyan
+  0x9933ff, // purple
 ];
 
-const MAX_EMISSIVE = 0.22;
+const MAX_EMISSIVE = 0.5;
 
 interface TileData {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshStandardMaterial>;
@@ -68,11 +66,11 @@ export function buildDiscoFloor(): {
       const nextIdx = (startIdx + 1 + ((x + z) % (PALETTE.length - 1))) % PALETTE.length;
 
       const mat = new THREE.MeshStandardMaterial({
-        color: 0x101216,
+        color: 0x18181b,
         emissive: PALETTE[startIdx],
         emissiveIntensity: MAX_EMISSIVE * 0.6,
-        metalness: 0.15,
-        roughness: 0.55,
+        metalness: 0.2,
+        roughness: 0.5,
       });
 
       const mesh = new THREE.Mesh(tileGeo, mat);

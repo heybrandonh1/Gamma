@@ -1,6 +1,6 @@
 # Disco Dancer
 
-A Mixamo dancer holding a glowing golden key, wearing a party hat, on a subtle multi-color disco floor. Loops a samba and erupts into a "break" burst from time to time.
+A Mixamo dancer in a rainbow jester crown, dancing on a vibrant emissive tile floor. On mount, confetti rains down, a faceted chrome disco ball descends from above, and six colored ceiling spotlights kick on and start sweeping. From then on the show stays in club mode and confetti bursts again every ~25 s. Loops samba and occasionally erupts into a procedural break flourish.
 
 ## Usage
 
@@ -13,7 +13,7 @@ import { DiscoDancer } from "@gamma/three-js-vibes/disco-dancer";
 />
 ```
 
-The component is a regular React client component; it owns its renderer, scene, mixer, and resize observer, and disposes everything on unmount.
+The component is a regular React client component; it owns its renderer, scene, mixer, controllers, and resize observer, and disposes everything on unmount.
 
 ## Props
 
@@ -21,29 +21,47 @@ The component is a regular React client component; it owns its renderer, scene, 
 | ---------------- | --------------------- | -------- | ---------------------------------------------------------------------------- |
 | `sambaUrl`       | `string`              | yes      | URL of the Samba Dancing FBX (Mixamo rig). Host app serves this from `/public`. |
 | `breakdanceUrl`  | `string`              | no       | Optional second FBX. When provided, "break" mode crossfades into this clip instead of running the procedural overlay. |
-| `reduceMotion`   | `boolean \| null`     | no       | When `true`, all animation, swap timers, and floor shimmer are paused.       |
+| `reduceMotion`   | `boolean \| null`     | no       | When `true`, the show snaps to its steady-state visuals with no animation: ball at rest, lights on, no confetti, samba paused. |
 | `aspectRatio`    | `string`              | no       | CSS `aspect-ratio` for the canvas wrapper. Defaults to `1 / 0.72`.            |
 | `className`      | `string`              | no       | Extra classes merged onto the canvas wrapper.                                |
 
 ## Behaviour
 
-- **Samba loop** — the dancer's default state, looping the original Mixamo samba clip.
-- **Break burst** — every 18–26 s the controller fires a ~4.5 s "break" segment:
+### Show timeline (intro on mount, then periodic bursts)
+
+```text
+t=0       mounted; samba already playing; ball hidden, lights off, no confetti
+t=3000    burst confetti #1
+t=8000    start ball descent (lerp y over 2s)
+t=10000   ball at rest, spinning permanently; ramp club lights to full
+t=12000+  steady state — confetti bursts every 25 s, ball + lights stay on
+```
+
+### Always-on beats
+
+- **Samba loop** — the dancer's default state, the original Mixamo samba clip.
+- **Break burst** — every 18–26 s the animation controller fires a ~4.5 s "break" segment:
   - if `breakdanceUrl` is set, it crossfades from samba → breakdance and back;
-  - otherwise it boosts samba `timeScale` to ~1.6×, spins the root, adds a bouncy hop, and tilts forward, simulating a break style flourish on the existing clip.
-- **Subtle disco floor** — 16×16 grid of tiles with low-intensity emissive cycling through six pastel colors. Each tile has a randomized phase so the floor reads as a slow shimmer rather than a strobe.
-- **Party hat** — bright pastel cone + brim torus + pompom, attached to the head bone.
-- **Golden key** — same chunky gold key the dancer carried in the original Project Alpha gate page, parented to the right (or left) hand bone.
-- **Click to jump** — the dancer hops on tap (preserved from the original).
+  - otherwise it boosts samba `timeScale` to ~1.6×, spins the root, and tilts forward, simulating a break style flourish on the existing clip.
+- **Disco floor** — 16×16 grid of emissive tiles cycling through a saturated party palette (hot pink / tangerine / yellow / mint / cyan / purple). Per-tile phase randomization keeps it shimmering rather than strobing.
+- **Rainbow jester hat** — a chunky gold band with four colored cone "horns" (magenta / gold / mint / indigo), each topped with a glowing emissive pompom. Parented to the head bone.
+- **Click to jump** — the dancer hops on tap.
+
+### Show beats (timed by `show-controller.ts`)
+
+- **Confetti** — 220-piece InstancedMesh of small rectangular planes; physics integration on the CPU (gravity + drag + per-piece tumble). Hides itself between bursts so the GPU does no work.
+- **Disco ball** — `IcosahedronGeometry` with `flatShading: true` for the mirror-facet look, `MeshStandardMaterial` at `metalness: 1, roughness: 0.08`, fed by a tiny PMREM env map of a colored gradient room so the facets actually reflect something. Suspended from a thin string with a chrome cap on top; warm `PointLight` at its center; spins forever.
+- **Club lights** — six colored `SpotLight`s mounted at the implicit ceiling, each sweeping its target in an independent circle near the floor. Two cast shadows; the rest are decorative. Tiny emissive bulb meshes mark the lights' positions.
 
 ## Accessibility
 
-Honors `prefers-reduced-motion` via the `reduceMotion` prop:
+Honors `prefers-reduced-motion` via the `reduceMotion` prop. When it flips on:
 
 - mixer is paused (no body animation),
 - break-burst timer is suspended,
-- floor tiles freeze on their initial palette index,
-- click-to-jump is a no-op.
+- floor tiles freeze,
+- click-to-jump is a no-op,
+- the show-controller snaps to steady state (ball at rest, lights on, no confetti) so the user still gets the "final picture" without animation.
 
 The host app is expected to read `useReducedMotion()` (or equivalent) and pass it in.
 

@@ -6,9 +6,15 @@ import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { findBone, disposeObject } from "./bone-utils";
-import { buildGoldenKey } from "./golden-key";
 import { buildPartyHat } from "./party-hat";
 import { buildDiscoFloor } from "./disco-floor";
+import { buildConfetti, type Confetti } from "./confetti";
+import { buildDiscoBall, type DiscoBall } from "./disco-ball";
+import { buildClubLights, type ClubLights } from "./club-lights";
+import {
+  createShowController,
+  type ShowController,
+} from "./show-controller";
 import {
   createAnimationController,
   pickPrimaryClip,
@@ -54,14 +60,16 @@ export function DiscoDancer({
   const mountRef = useRef<HTMLDivElement>(null);
   const reduceMotionRef = useRef(reduceMotion ?? false);
   const controllerRef = useRef<AnimationController | null>(null);
+  const showRef = useRef<ShowController | null>(null);
   const loadGenerationRef = useRef(0);
   const [failed, setFailed] = useState(false);
 
   reduceMotionRef.current = reduceMotion ?? false;
 
-  // Push the latest reduceMotion value into the controller without a re-mount.
+  // Push the latest reduceMotion value into the controllers without a re-mount.
   useEffect(() => {
     controllerRef.current?.setReducedMotion(reduceMotion ?? false);
+    showRef.current?.setReducedMotion(reduceMotion ?? false);
   }, [reduceMotion]);
 
   useEffect(() => {
@@ -78,18 +86,23 @@ export function DiscoDancer({
     let raf = 0;
     let mixer: THREE.AnimationMixer | null = null;
     let root: THREE.Group | null = null;
-    let keyDispose: (() => void) | null = null;
     let hatDispose: (() => void) | null = null;
     let floorDispose: (() => void) | null = null;
     let floorUpdate: ((elapsed: number, paused?: boolean) => void) | null = null;
+    let confetti: Confetti | null = null;
+    let ball: DiscoBall | null = null;
+    let lights: ClubLights | null = null;
 
     const scene = new THREE.Scene();
 
-    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x222222, 3.2);
+    // Tuned for the new light card background — softer ambient + a
+    // half-strength key light so the colored club spots stay readable
+    // against the page bg without washing out.
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0xbcbcbc, 2.0);
     hemiLight.position.set(0, 200, 0);
     scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 3);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.8);
     dirLight.position.set(0, 200, 100);
     dirLight.castShadow = true;
     dirLight.shadow.camera.top = 180;
@@ -119,7 +132,24 @@ export function DiscoDancer({
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
+    // ACES Filmic keeps the saturated palette readable against the light
+    // card bg — unmapped colors clip and wash out.
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.0;
     renderer.setClearColor(0x000000, 0);
+
+    // Confetti, disco ball, club lights — driven by the show controller below.
+    confetti = buildConfetti();
+    scene.add(confetti.group);
+
+    ball = buildDiscoBall(renderer);
+    scene.add(ball.group);
+
+    lights = buildClubLights();
+    scene.add(lights.group);
+
+    showRef.current = createShowController({ confetti, ball, lights });
+    showRef.current.setReducedMotion(reduceMotionRef.current);
 
     const resize = () => {
       const w = Math.max(280, mount.clientWidth || 400);
@@ -251,19 +281,6 @@ export function DiscoDancer({
           head.add(hat);
         }
 
-        // Golden key — right hand preferred, left as fallback.
-        const hand =
-          findBone(sambaObject, /RightHand$/i) ??
-          findBone(sambaObject, /LeftHand$/i);
-        if (hand) {
-          const { group: key, dispose } = buildGoldenKey();
-          keyDispose = dispose;
-          key.scale.setScalar(1.4);
-          key.rotation.set(Math.PI / 2, 0, Math.PI / 2);
-          key.position.set(8, -2, 2);
-          hand.add(key);
-        }
-
         scene.add(sambaObject);
       },
       undefined,
@@ -277,10 +294,15 @@ export function DiscoDancer({
       raf = requestAnimationFrame(tick);
       const delta = clock.getDelta();
       const elapsed = clock.getElapsedTime();
+      const now = performance.now();
 
       if (mixer && !reduceMotionRef.current) mixer.update(delta);
-      controllerRef.current?.update(performance.now());
+      controllerRef.current?.update(now);
       floorUpdate?.(elapsed, reduceMotionRef.current);
+      confetti?.update(delta, reduceMotionRef.current);
+      ball?.update(delta, reduceMotionRef.current);
+      lights?.update(delta, elapsed, reduceMotionRef.current);
+      showRef.current?.update(now);
 
       if (root) {
         if (jump) {
@@ -311,18 +333,33 @@ export function DiscoDancer({
       window.removeEventListener("pointerup", onUp);
       controllerRef.current?.dispose();
       controllerRef.current = null;
+      showRef.current?.dispose();
+      showRef.current = null;
       if (root) {
         scene.remove(root);
         disposeObject(root);
         root = null;
       }
-      keyDispose?.();
-      keyDispose = null;
       hatDispose?.();
       hatDispose = null;
       floorDispose?.();
       floorDispose = null;
       floorUpdate = null;
+      if (confetti) {
+        scene.remove(confetti.group);
+        confetti.dispose();
+        confetti = null;
+      }
+      if (ball) {
+        scene.remove(ball.group);
+        ball.dispose();
+        ball = null;
+      }
+      if (lights) {
+        scene.remove(lights.group);
+        lights.dispose();
+        lights = null;
+      }
       mixer = null;
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
@@ -340,7 +377,10 @@ export function DiscoDancer({
     <div
       ref={mountRef}
       className={
-        "relative w-full overflow-hidden rounded-xl border border-black/10 bg-[#101216] " +
+        "relative w-full overflow-hidden rounded-xl border border-foreground/10 " +
+        "bg-[color-mix(in_srgb,var(--color-background)_92%,#a0a0a0)] " +
+        "shadow-[0_20px_50px_-24px_rgba(0,0,0,0.35)] " +
+        "dark:bg-[color-mix(in_srgb,var(--color-background)_88%,#555)] " +
         (className ?? "")
       }
       style={{ aspectRatio }}

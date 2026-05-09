@@ -10,7 +10,7 @@ Tiny three.js scenes meant to be embedded as live cards in a portfolio (or anywh
 
 Current vibes:
 
-- **`disco-dancer/`** — A Mixamo dancer holding a glowing golden key, wearing a party hat, on a subtle multi-color disco floor. Loops a samba and crossfades into a breakdance burst from time to time.
+- **`disco-dancer/`** — A Mixamo dancer in a rainbow jester crown, dancing on a vibrant emissive tile floor. On mount, confetti rains down, a faceted chrome disco ball descends, and six sweeping ceiling spotlights kick on. Confetti bursts again every ~25 s. Loops samba and erupts into a procedural break flourish.
 
 ## How Gamma is consumed
 
