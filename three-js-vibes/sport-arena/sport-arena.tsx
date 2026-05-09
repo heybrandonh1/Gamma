@@ -605,13 +605,24 @@ export function SportArena({
         };
 
         // ---- resize ------------------------------------------------------
+        // NB: we intentionally use the default `updateStyle=true` overload
+        // of `setSize` here. Passing `false` (which the upstream
+        // full-window example does) leaves the canvas without explicit
+        // CSS dimensions, so on a Retina display
+        // (`devicePixelRatio = 2`) the canvas's intrinsic display size
+        // ends up at twice the wrapper's CSS size — and since the
+        // wrapper has `overflow-hidden`, the page only ever shows the
+        // top-left quadrant of the rendered scene. Letting three.js set
+        // canvas style to match the requested size keeps the render
+        // resolution independent of the layout size while still letting
+        // the canvas fit its parent.
         const resize = () => {
           if (!renderer) return;
           const w = Math.max(280, mount.clientWidth || 400);
           const h = Math.max(200, Math.round(w * 0.72));
           camera.aspect = w / h;
           camera.updateProjectionMatrix();
-          renderer.setSize(w, h, false);
+          renderer.setSize(w, h);
           rebuildScene();
         };
 
@@ -620,7 +631,7 @@ export function SportArena({
         const h = Math.max(200, Math.round(w * 0.72));
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
-        renderer.setSize(w, h, false);
+        renderer.setSize(w, h);
         boxSize.w = getBoxWidth();
         fitCameraToBox();
         createBox();

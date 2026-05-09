@@ -520,13 +520,16 @@ export function SportArenaWebGL({
       };
 
       // ---- resize ------------------------------------------------------
+      // Default `updateStyle=true` overload — see the WebGPU sibling for
+      // the rationale (Retina + `overflow-hidden` wrapper would
+      // otherwise clip the rendered canvas to the top-left quadrant).
       const resize = () => {
         if (!renderer) return;
         const w = Math.max(280, mount.clientWidth || 400);
         const h = Math.max(200, Math.round(w * 0.72));
         camera.aspect = w / h;
         camera.updateProjectionMatrix();
-        renderer.setSize(w, h, false);
+        renderer.setSize(w, h);
         rebuildScene();
       };
 
@@ -534,7 +537,7 @@ export function SportArenaWebGL({
       const h0 = Math.max(200, Math.round(w0 * 0.72));
       camera.aspect = w0 / h0;
       camera.updateProjectionMatrix();
-      renderer.setSize(w0, h0, false);
+      renderer.setSize(w0, h0);
       boxSize.w = getBoxWidth();
       fitCameraToBox();
       createBox();
