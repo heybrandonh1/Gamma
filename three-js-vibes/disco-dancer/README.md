@@ -47,7 +47,7 @@ t=12000+  steady state — confetti bursts every 25 s, ball + lights stay on
   - pass `disableBreaks` to skip this beat entirely and keep the dancer on the samba loop.
 - **Disco floor** — 16×16 grid of emissive tiles cycling through a saturated party palette (hot pink / tangerine / yellow / mint / cyan / purple). Per-tile phase randomization keeps it shimmering rather than strobing.
 - **Rainbow jester hat** — a chunky gold band with four colored cone "horns" (magenta / gold / mint / indigo), each topped with a glowing emissive pompom. Parented to the head bone.
-- **Click to jump** — the dancer hops on tap.
+- **Click to jump + jelly** — clicking the canvas hops the dancer (a 750 ms parabolic Y arc) *and* fires a damped cartoon squash-and-stretch on the FBX root's scale: Y compresses on impact, X / Z bulge outward to fake volume preservation, and a secondary out-of-phase Z term keeps the wobble looking organically jelly-like instead of mechanically symmetric. The whole-body wobble decays at `e^(-2.0·t)` so it rings out for ~2.5 s. Re-clicking refreshes the wobble (jump is still one-shot per cycle).
 
 ### Show beats (timed by `show-controller.ts`)
 

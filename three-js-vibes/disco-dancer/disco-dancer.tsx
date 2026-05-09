@@ -187,6 +187,19 @@ export function DiscoDancer({
     type Jump = { start: number; duration: number; height: number };
     let jump: Jump | null = null;
 
+    // Jelly wobble: a damped cartoon squash-and-stretch applied to the FBX
+    // root group's scale on click. Y squashes (cos starts at 1 = peak
+    // squash on impact), X / Z bulge outward to fake volume preservation,
+    // and a secondary out-of-phase term on Z gives the dancer that
+    // "wobbling jelly bean" character. Re-clicking refreshes the wobble.
+    type Jelly = { start: number; amp: number };
+    let jelly: Jelly | null = null;
+    const JELLY_AMP = 0.22;
+    const JELLY_DECAY = 2.0;
+    const JELLY_FREQ_Y = 8.5;
+    const JELLY_FREQ_Z = 11.0;
+    const JELLY_REST = 0.0025;
+
     const onDown = () => {
       renderer.domElement.style.cursor = "grabbing";
     };
@@ -195,8 +208,10 @@ export function DiscoDancer({
     };
     const onClick = () => {
       if (!root || reduceMotionRef.current) return;
-      if (jump) return;
-      jump = { start: performance.now(), duration: 750, height: 120 };
+      // Jump is one-shot per cycle; jelly always resets on a fresh click
+      // so spam-clicking keeps the body wobbling.
+      if (!jump) jump = { start: performance.now(), duration: 750, height: 120 };
+      jelly = { start: performance.now(), amp: JELLY_AMP };
     };
 
     renderer.domElement.addEventListener("pointerdown", onDown);
@@ -327,6 +342,32 @@ export function DiscoDancer({
           }
         } else {
           root.position.y = 0;
+        }
+
+        // Cartoon jelly squash on click — independent channel from the
+        // jump (position.y), so they happily co-exist on the same frame.
+        if (jelly) {
+          const dt = (now - jelly.start) / 1000;
+          const peakNow = jelly.amp * Math.exp(-dt * JELLY_DECAY);
+          if (peakNow < JELLY_REST) {
+            root.scale.set(1, 1, 1);
+            jelly = null;
+          } else {
+            // cos at t=0 = 1 ⇒ Y is at maximum squash, X / Z at max bulge.
+            const ySquash = peakNow * Math.cos(dt * JELLY_FREQ_Y);
+            const lateralBulge = peakNow * 0.55 * Math.cos(dt * JELLY_FREQ_Y);
+            // Z drifts on a slightly different frequency so the wobble
+            // goes out of phase over time — that's what makes a real
+            // jelly look "alive" rather than mechanically symmetric.
+            const zAsym = peakNow * 0.18 * Math.cos(dt * JELLY_FREQ_Z);
+            root.scale.set(
+              1 + lateralBulge + zAsym,
+              1 - ySquash,
+              1 + lateralBulge - zAsym,
+            );
+          }
+        } else {
+          root.scale.set(1, 1, 1);
         }
       }
 
