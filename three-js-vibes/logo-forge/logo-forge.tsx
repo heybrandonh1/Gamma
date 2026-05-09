@@ -229,13 +229,22 @@ export function LogoForge({
       ref={mountRef}
       className={
         "relative w-full overflow-hidden rounded-xl border border-foreground/10 " +
-        // Deep midnight gradient — the additive particles need a dark
-        // canvas to read as glowing dust.
-        "bg-[radial-gradient(ellipse_at_center,#1a1d35_0%,#0a0c1a_70%,#05060f_100%)] " +
         "shadow-[0_20px_50px_-24px_rgba(0,0,0,0.55)] " +
         (className ?? "")
       }
-      style={{ aspectRatio }}
+      // Deep midnight gradient inlined as a style, not a Tailwind arbitrary
+      // class. Tailwind 4 needs `bg-[image:...]` to treat a function value as
+      // background-image; without that prefix it falls back to background-color
+      // (invalid → ignored) and the additive white particles render against a
+      // transparent / page-color background, which looks like an empty white
+      // card. Solid fallback color sits under the gradient so even if the
+      // gradient itself fails to parse on some browser, the canvas stays dark.
+      style={{
+        aspectRatio,
+        backgroundColor: "#0a0c1a",
+        backgroundImage:
+          "radial-gradient(ellipse at center, #1a1d35 0%, #0a0c1a 70%, #05060f 100%)",
+      }}
       role="img"
       aria-label={
         activeFrame
