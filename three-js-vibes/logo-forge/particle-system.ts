@@ -18,6 +18,12 @@ export interface ParticleSystem {
   targets: Float32Array;
   /** Where each particle started (for tween interpolation). */
   origins: Float32Array;
+  /**
+   * Per-particle Bezier control point. The morph controller writes a swirled
+   * midway position here so the morph arcs through a vortex instead of
+   * straight-lining from origin to target.
+   */
+  midpoints: Float32Array;
   /** Per-particle target color. */
   colorTargets: Float32Array;
   /** Per-particle current color (mutated each frame toward target). */
@@ -74,6 +80,7 @@ export function createParticleSystem(opts: ParticleSystemOptions): ParticleSyste
   const positions = new Float32Array(count * 3);
   const targets = new Float32Array(count * 3);
   const origins = new Float32Array(count * 3);
+  const midpoints = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
   const colorTargets = new Float32Array(count * 3);
   const phases = new Float32Array(count);
@@ -139,6 +146,7 @@ export function createParticleSystem(opts: ParticleSystemOptions): ParticleSyste
     positions,
     targets,
     origins,
+    midpoints,
     colors,
     colorTargets,
     phases,

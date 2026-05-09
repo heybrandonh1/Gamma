@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
 import { createParticleSystem } from "./particle-system";
 import {
@@ -98,6 +102,23 @@ export function LogoForge({
     const system = createParticleSystem({ count: particleCount });
     scene.add(system.points);
 
+    // Post-processing pipeline: render the scene → bloom the additive
+    // particles for that "real glow" look → tonemap/output. Bloom strength
+    // is tuned for the dark midnight bg; bump `0.9` if your background is
+    // even darker.
+    const composer = new EffectComposer(renderer);
+    const renderPass = new RenderPass(scene, camera);
+    composer.addPass(renderPass);
+    const bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(800, 600),
+      /* strength */ 0.9,
+      /* radius   */ 0.55,
+      /* threshold*/ 0.08,
+    );
+    composer.addPass(bloomPass);
+    const outputPass = new OutputPass();
+    composer.addPass(outputPass);
+
     const resolvedFrames = frames ?? buildFrames(logosBaseUrl);
 
     const controller = createMorphController({
@@ -120,10 +141,10 @@ export function LogoForge({
       const w = Math.max(280, mount.clientWidth || 400);
       const h = Math.max(280, Math.round(w * 0.72));
       camera.aspect = w / h;
-      // Keep a consistent silhouette size whether the card is wide or narrow
-      // by tracking aspect into the view.
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      composer.setSize(w, h);
+      bloomPass.setSize(w, h);
     };
 
     mount.appendChild(renderer.domElement);
@@ -140,11 +161,40 @@ export function LogoForge({
     };
     renderer.domElement.addEventListener("click", onClick);
 
+    // Mouse parallax: track normalized pointer (-1..1) and ease the camera
+    // toward it. When the cursor isn't moving, layer in a slow lissajous
+    // drift so the scene never looks frozen.
+    let mx = 0;
+    let my = 0;
+    const onPointer = (e: PointerEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      my = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+    };
+    const onPointerLeave = () => {
+      mx = 0;
+      my = 0;
+    };
+    renderer.domElement.addEventListener("pointermove", onPointer);
+    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+
     const tick = (now: number) => {
       if (!alive) return;
       raf = requestAnimationFrame(tick);
       controller.update(now);
-      renderer.render(scene, camera);
+
+      // Camera parallax: damped follow of pointer + slow lissajous idle
+      // motion. Together these give the scene a sense of weight even before
+      // a morph kicks off.
+      const driftX = Math.sin(now * 0.00028) * 0.18;
+      const driftY = Math.cos(now * 0.00022) * 0.14;
+      const aimX = mx * 0.45 + driftX;
+      const aimY = my * 0.35 + driftY;
+      camera.position.x += (aimX - camera.position.x) * 0.04;
+      camera.position.y += (aimY - camera.position.y) * 0.04;
+      camera.lookAt(0, 0, 0);
+
+      composer.render();
     };
     raf = requestAnimationFrame(tick);
 
@@ -153,11 +203,15 @@ export function LogoForge({
       cancelAnimationFrame(raf);
       ro.disconnect();
       renderer.domElement.removeEventListener("click", onClick);
+      renderer.domElement.removeEventListener("pointermove", onPointer);
+      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
       unsub();
       controller.dispose();
       controllerRef.current = null;
       scene.remove(system.points);
       system.dispose();
+      bloomPass.dispose();
+      composer.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);

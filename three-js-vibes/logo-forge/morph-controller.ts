@@ -105,6 +105,36 @@ export function createMorphController(
     }
   }
 
+  /**
+   * For each particle, compute a swirled Bezier midpoint between its current
+   * origin and the new target. The midpoint is the geometric midpoint rotated
+   * tangentially around the canvas center and pushed outward, so the morph
+   * arcs through a vortex instead of straight-lining. Add Z jitter so the
+   * vortex has volume.
+   */
+  function writeMidpoints() {
+    const { origins, targets, midpoints } = system;
+    for (let i = 0; i < system.count; i++) {
+      const i3 = i * 3;
+      const ox = origins[i3];
+      const oy = origins[i3 + 1];
+      const tx = targets[i3];
+      const ty = targets[i3 + 1];
+      const mx = (ox + tx) * 0.5;
+      const my = (oy + ty) * 0.5;
+      // Rotate the midpoint around the origin by ~quarter-turn and push it
+      // outward. The base radius keeps the swirl visible even when origin and
+      // target are close together (small `m` magnitude).
+      const baseAngle = Math.atan2(my, mx);
+      const swirl = Math.PI * 0.45 + (Math.random() - 0.5) * 0.4;
+      const radius = Math.hypot(mx, my) * 1.6 + 0.7 + Math.random() * 0.3;
+      const angle = baseAngle + swirl;
+      midpoints[i3] = Math.cos(angle) * radius;
+      midpoints[i3 + 1] = Math.sin(angle) * radius;
+      midpoints[i3 + 2] = (Math.random() - 0.5) * 1.2;
+    }
+  }
+
   function writeColorTargets(index: number) {
     hexToRgb(frames[index].color, TMP);
     const { colorTargets } = system;
@@ -126,8 +156,10 @@ export function createMorphController(
     writeColorTargets(index);
 
     // Snapshot current positions as the tween "from" so the morph interpolates
-    // smoothly even mid-flight.
+    // smoothly even mid-flight, then derive the swirl midpoints from
+    // origins → targets.
     system.origins.set(system.positions);
+    writeMidpoints();
 
     if (!animate) {
       system.positions.set(system.targets);
@@ -147,7 +179,8 @@ export function createMorphController(
       ease: "power2.inOut",
       onUpdate: () => {
         const p = state.p;
-        const { positions, origins, targets, colors, colorTargets } = system;
+        const { positions, origins, midpoints, targets, colors, colorTargets } =
+          system;
         for (let i = 0; i < system.count; i++) {
           const i3 = i * 3;
           // Stagger: each particle starts at a different point along [0, 1].
@@ -155,11 +188,23 @@ export function createMorphController(
           const offset = (i % 17) * 0.012;
           const local = Math.min(Math.max(p * 1.18 - offset, 0), 1);
           const ease = local * local * (3 - 2 * local); // smoothstep
-          positions[i3] = origins[i3] + (targets[i3] - origins[i3]) * ease;
+          // Quadratic Bezier through (origin → midpoint → target). Particles
+          // arc through the swirled midpoint instead of straight-lining,
+          // giving the morph its vortex character.
+          const it = 1 - ease;
+          const a = it * it;
+          const b = 2 * it * ease;
+          const c = ease * ease;
+          positions[i3] =
+            a * origins[i3] + b * midpoints[i3] + c * targets[i3];
           positions[i3 + 1] =
-            origins[i3 + 1] + (targets[i3 + 1] - origins[i3 + 1]) * ease;
+            a * origins[i3 + 1] +
+            b * midpoints[i3 + 1] +
+            c * targets[i3 + 1];
           positions[i3 + 2] =
-            origins[i3 + 2] + (targets[i3 + 2] - origins[i3 + 2]) * ease;
+            a * origins[i3 + 2] +
+            b * midpoints[i3 + 2] +
+            c * targets[i3 + 2];
           colors[i3] = colors[i3] + (colorTargets[i3] - colors[i3]) * 0.06;
           colors[i3 + 1] =
             colors[i3 + 1] + (colorTargets[i3 + 1] - colors[i3 + 1]) * 0.06;
