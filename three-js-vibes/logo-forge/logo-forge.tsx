@@ -2,10 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 
 import { createParticleSystem } from "./particle-system";
 import {
@@ -99,25 +95,15 @@ export function LogoForge({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
 
-    const system = createParticleSystem({ count: particleCount });
+    // Bumped particle size for unambiguous visibility against the dark bg.
+    // Bloom post-processing was previously layered here via EffectComposer
+    // but has been removed for now — it was the only piece of the pipeline
+    // with a documented failure mode of "render targets misconfigure and the
+    // canvas goes empty," which matched the user-reported "white card" too
+    // well to keep around without proof. We can re-add it once the baseline
+    // particle render is confirmed correct in production.
+    const system = createParticleSystem({ count: particleCount, size: 18 });
     scene.add(system.points);
-
-    // Post-processing pipeline: render the scene → bloom the additive
-    // particles for that "real glow" look → tonemap/output. Bloom strength
-    // is tuned for the dark midnight bg; bump `0.9` if your background is
-    // even darker.
-    const composer = new EffectComposer(renderer);
-    const renderPass = new RenderPass(scene, camera);
-    composer.addPass(renderPass);
-    const bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(800, 600),
-      /* strength */ 0.9,
-      /* radius   */ 0.55,
-      /* threshold*/ 0.08,
-    );
-    composer.addPass(bloomPass);
-    const outputPass = new OutputPass();
-    composer.addPass(outputPass);
 
     const resolvedFrames = frames ?? buildFrames(logosBaseUrl);
 
@@ -143,8 +129,6 @@ export function LogoForge({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-      composer.setSize(w, h);
-      bloomPass.setSize(w, h);
     };
 
     mount.appendChild(renderer.domElement);
@@ -194,7 +178,7 @@ export function LogoForge({
       camera.position.y += (aimY - camera.position.y) * 0.04;
       camera.lookAt(0, 0, 0);
 
-      composer.render();
+      renderer.render(scene, camera);
     };
     raf = requestAnimationFrame(tick);
 
@@ -210,8 +194,6 @@ export function LogoForge({
       controllerRef.current = null;
       scene.remove(system.points);
       system.dispose();
-      bloomPass.dispose();
-      composer.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);
