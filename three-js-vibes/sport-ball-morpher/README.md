@@ -1,192 +1,184 @@
 # Sport Ball Morpher
 
-A 3D showcase of six procedural sport-equipment meshes — baseball, bat,
+A 3D showcase of six procedural sport-equipment shapes — baseball, bat,
 basketball, football, soccer ball, hockey puck — that auto-cycle on a lit
-stage with a **true vertex-level silhouette morph** between each one. Each
-shape molds smoothly into the next; nothing crossfades, scales into a
-puddle, or disappears mid-transition. The user can grab the canvas and
-freely orbit the camera 360° to inspect the active object from any angle,
-and **click anywhere on a mesh to poke it like jello** — the surface
-ripples outward from the click point and settles back to rest.
+stage as **one continuously morphing mass**. Nothing crossfades, nothing
+disappears; the body smoothly molds from each sport into the next with its
+silhouette, color, surface decorations, and material response all changing
+on a single per-vertex blend, like a lava lamp where each blob remembers
+how to be a baseball or a football.
 
-Lives inside the [Gamma](https://github.com/heybrandonh1/Gamma) submodule and
-mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
+The viewer can grab the canvas and freely orbit the camera 360° to inspect
+the active object from any angle, and **click anywhere on the body to poke
+it with a wavy multi-frequency jello wobble** — three desynchronised damped
+sine terms ride the surface for a couple of seconds, so different parts of
+the body bob at slightly different times the way real jelly does.
+
+Lives inside the [Gamma](https://github.com/heybrandonh1/Gamma) submodule
+and mounts in Project Alpha's `/playground` page via
+`lib/playground-vibes.tsx`.
 
 ## How the morph works
 
-The previous version of this vibe was a crossfade with a non-uniform
-"puddle" pose — the outgoing mesh squashed flat, the incoming mesh
-emerged from the same flat pose with an `elastic.out` rebound. Visually
-that read as two distinct objects briefly overlapping and one of them
-flickering out, not as one shape changing form. This rewrite replaces
-that with an actual silhouette morph driven by per-vertex shader code.
+The previous architecture kept a separate `THREE.Group` per sport and
+crossfaded their opacity while morphing each one's silhouette toward the
+other. Even with mathematically matched silhouettes, two overlapping
+meshes with different vertex distributions and different triangle
+topologies always reveal themselves at the boundary — the eye reads the
+transition as "outgoing fading out, incoming fading in", not as one shape
+molding into the next. So we threw it out.
 
-Pipeline (see [`morph-shader.ts`](./morph-shader.ts) and
-[`surface-distance.ts`](./surface-distance.ts)):
+This rewrite uses **one mesh, every sport**:
 
-1. **Rest pose** — every body geometry (sphere, lathe, cylinder, prolate
-   spheroid, truncated icosahedron, tube curves for seams / laces) is
-   built in a shared **normalized orientation**: bat long axis along Y,
-   football long axis along Z, hockey puck cylinder axis along X (the
-   `rotation.z = π/2` lay-on-side is baked into the cylinder geometry,
-   not the group). Aesthetic group rotations the previous design used
-   are gone; `OrbitControls` covers camera angles.
+1. A shared high-resolution `SphereGeometry(1, 192, 96)` (~18 600
+   vertices) is the base. Its triangle topology never changes — only the
+   per-vertex positions and colors do.
 
-2. **Per-vertex morph attributes** — at build time, each body geometry
-   gets three custom attributes attached:
-     - `aDirection` (`vec3`): unit vector from origin to the rest position.
-     - `aRestDist` (`float`): length of the rest position.
-     - `aTargetDist` (`float`): mutable; recomputed every morph cycle.
+2. At mount time, for every sport in the catalogue, we precompute two
+   `Float32Array`s of length `numVerts × 3`:
+     - **Per-vertex position**: along each vertex's outward unit
+       direction, we evaluate that sport's `surfaceDist(d)` ray-hit
+       function (sphere, lathe, prolate spheroid, capped cylinder) to
+       find where the sport's surface lives, then place the vertex
+       there. So each sport gets its own per-vertex projection of the
+       same sphere.
+     - **Per-vertex color**: each sport's `colorAt(d)` paints the body's
+       albedo at that direction *including* its decoration — baseball
+       stitches along the figure-8 seam curve, basketball seams along
+       four great circles, football lace strip + cross stitches, soccer
+       pentagon/hexagon panel pattern, hockey puck rim band. The
+       decoration is encoded in the per-vertex color, not as a separate
+       mesh, so it morphs along with the silhouette automatically.
 
-3. **Per-sport surface distance functions** — each sport exposes a
-   `(dx, dy, dz) → distance` function that returns where a ray from the
-   origin hits that sport's surface in object-local space:
-     - Baseball / basketball / soccer ball: just the radius.
-     - Football: iterative solve of the prolate spheroid + quartic taper.
-     - Bat: closed-form solve through the lathe profile, segment by
-       segment.
-     - Hockey puck: capped-cylinder ray hit (whichever side or cap is
-       closer).
+3. Two attribute slots A and B hold the *current* and *next* sport's
+   data. The vertex shader interpolates:
 
-4. **Vertex shader** (`attachSportShader` in
-   [`morph-shader.ts`](./morph-shader.ts)) — replaces three.js's default
-   `transformed = vec3(position)` with
-   `transformed = aDirection · mix(aRestDist, aTargetDist,
-   smoothstep(uMorphT))`. So when `uMorphT` is 0 the mesh is exactly at
-   rest; when it's 1 the mesh's silhouette is the *target* sport's
-   silhouette projected onto this mesh's vertex directions.
+       float t = smoothstep(0, 1, uBlend);
+       transformed   = mix(aPosA, aPosB, t);
+       vMorphedColor = mix(aColA, aColB, t);
+       objectNormal  = normalize(transformed);
 
-5. **Show controller** ([`show-controller.ts`](./show-controller.ts))
-   wires the morph cycle:
-     - Wires the OUTGOING mesh's `aTargetDist` to the INCOMING sport's
-       `surfaceDist`, and the INCOMING mesh's `aTargetDist` to the
-       OUTGOING sport's `surfaceDist`.
-     - Tweens a single `t: 0 → 1` over the morph window, applied as
-       `outgoing.uMorphT = t` and `incoming.uMorphT = 1 - t`.
-     - Crossfades body opacity (`outgoing 1 → 0`, `incoming 0 → 1`) on
-       the same curve.
+   `uBlend = 0` means "fully sport A"; `uBlend = 1` means "fully sport
+   B". The shader recomputes the surface normal from the morphed
+   position so lighting follows the silhouette and doesn't strobe
+   between the two sports' rest normals at intermediate blends.
 
-   Because both meshes use the SAME pair of distance functions, their
-   silhouettes coincide at every value of `t` (`mix(A, B, t)` ≡ `mix(A, B, t)`
-   on both meshes). The opacity crossfade is therefore visually a no-op
-   for the silhouette — the eye sees one continuously molding shape with
-   the color smoothly interpolating from sport A to sport B. There is no
-   puddle pose, no scale spring, and no moment where either body is
-   invisible while the other hasn't taken over.
+4. PBR scalars (`roughness`, `metalness`, `envMapIntensity`) ride the
+   same blend on the JS side — `material.roughness =
+   mix(sportA.roughness, sportB.roughness, smoothstep(uBlend))` each
+   frame — so the leather-baseball-to-polished-puck visual transition
+   isn't snapped at the cycle boundary either.
 
-## What morphs and what fades
+5. The show controller does the smallest possible animation loop:
+     - Hold at slot A's rest pose for ~2.4 s (`uBlend = 0`).
+     - Tween `uBlend: 0 → 1` over ~1.8 s with `power2.inOut`.
+     - On completion, ask the body to promote slot B's contents into
+       slot A and load sport `(current + 2) mod n` into slot B; reset
+       `uBlend = 0`.
+     - Loop.
 
-- **Bodies** of every sport — sphere, lathe, prolate spheroid, truncated
-  icosahedron, capped cylinder — all carry the morph attributes and
-  silhouette-morph between sports.
-- **Body-attached decorations** that ride on regular meshes also morph:
-  basketball seams (4 great-circle tubes), football lace strip + cross
-  stitches, hockey puck rim band, soccer ball pentagon/hexagon panels.
-  All of those use `TubeGeometry` / `BufferGeometry` and so have
-  per-vertex attributes the silhouette morph can deform.
-- **Instanced decorations** can't share vertex attributes across
-  instances, so the baseball's 216 cross-stitches (an `InstancedMesh`)
-  fade out at the start of the morph (~30%) and the new sport's
-  decorations fade back in at the end (~70%). The body shape change is
-  what dominates the visual story; the stitch fade is a minor accent.
-- **Rim point-light tint** crossfades across the full morph window so
-  the lighting morphs alongside the geometry.
+There is exactly **one mesh in the scene** at all times. There is no
+opacity crossfade, no overlapping silhouette pair, no separate decoration
+layer fading in or out. The morph is the entire transition.
+
+## Wavy jello
+
+Click the body and the vertex shader layers a damped multi-frequency
+wave on top of the morphed position:
+
+    if (uJiggleAmp > 0.0) {
+      float decay  = exp(-uJiggleTime * 1.8);
+      float dist   = length(transformed - uJiggleCenter);
+      float radial = exp(-dist * 0.5);
+
+      float wave = 0.55 * cos(uJiggleTime * 8.0  - dist * 3.0)
+                 + 0.30 * cos(uJiggleTime * 12.0 - dist * 5.5)
+                 + 0.18 * cos(uJiggleTime * 18.0 - dist * 9.5);
+
+      float disp = uJiggleAmp * decay * radial * wave;
+      transformed += aDirection * disp;
+
+      // whole-body breathing pulse
+      transformed *= 1.0 + uJiggleAmp * decay * cos(uJiggleTime * 6.0) * 0.18;
+    }
+
+The three sine terms tick at 8, 12, and 18 rad/s with progressively
+shorter spatial wavelengths, so they go in and out of phase across the
+~2.8 s decay window — the silhouette ripples in waves that don't repeat
+themselves, the way real jelly behaves when you poke it.
+
+The poke center is computed in the host component by raycasting against
+the rest sphere (the body mesh's `position` attribute is still the unit
+sphere — the morph happens in the shader), normalizing the hit to a unit
+direction, then projecting that direction onto the *current morphed
+surface* using a CPU mirror of the same `mix(distA, distB,
+smoothstep(uBlend))` formula. The wave radiates outward from where the
+user actually clicked even mid-morph.
 
 ## Anatomy
 
-- [`surface-distance.ts`](./surface-distance.ts) — per-sport ray-from-origin
-  distance functions used to drive the silhouette morph.
-- [`morph-shader.ts`](./morph-shader.ts) — the per-vertex morph attributes,
-  the `uMorphT` uniform, and the unified `attachSportShader` that splices
-  both the silhouette morph and the click-to-jello jiggle into a single
-  `MeshStandardMaterial` vertex stage. Splitting the two terms across
-  two `onBeforeCompile` hooks would create a fragile dependency on
-  three.js's exact replacement-string output, so they share one hook.
-- [`mesh-builders.ts`](./mesh-builders.ts) — six builders (one per sport)
-  that return a `SportMesh`: a `THREE.Group` plus `surfaceDist`,
-  `setMorphTarget`, `setMorphProgress`, `setBodyOpacity`,
-  `setDecorationOpacity`, spin axis + speed, click-to-jello hooks, and
-  a `dispose` helper. All geometry is procedural — no textures, no GLTF
-  assets.
-  - `buildBaseball`: cream sphere body (morphs) + 216 red instanced
-    cross-stitches (fade in/out).
-  - `buildBat`: `LatheGeometry` swept from a 10-point bat profile (knob,
-    handle, taper, barrel, rounded tip) — long axis along +Y.
-  - `buildBasketball`: orange sphere + 4 dark seam tubes (1 horizontal,
-    1 vertical, 2 tilted ±45°). Pebble bump map gives the leather grain;
-    seams ride the silhouette morph on the same morph attributes.
-  - `buildFootball`: `SphereGeometry` deformed into a prolate spheroid
-    (z stretched 1.7×, quartic tip taper) + a thin white lace strip
-    along the top with 7 perpendicular cross-stitches. Long axis along
-    +Z. The previous version had aesthetic `rotation.z = π/14` and
-    `rotation.x = -π/18` group tilts; those are removed (they would
-    break silhouette alignment during the morph). The user can orbit to
-    see the laces from a flattering angle.
-  - `buildSoccerBall`: a real **truncated icosahedron** (32 faces — 12
-    pentagons + 20 hexagons) constructed by truncating each
-    icosahedron vertex at 1/3 along its 5 incident edges, then
-    projecting all 60 vertices onto the sphere. A two-material `Mesh`
-    colors the pentagons black and hexagons white via geometry face
-    groups. Treated as a sphere of radius 0.9 by the morph.
-  - `buildHockeyPuck`: short `CylinderGeometry` body + a thin sleeve
-    cylinder around the rim. The "lay on its side" rotation
-    (`rotation.z = π/2`) is **baked into the geometry** so the puck's
-    cylinder axis is along +X — the silhouette morph queries surface
-    distances in a shared world frame, so the orientation must live
-    with the geometry, not above it.
-- [`show-controller.ts`](./show-controller.ts) — owns the cycle. Replaces
-  the previous puddle-crossfade with a true silhouette morph: configures
-  both meshes' morph targets, drives a single shared `t: 0 → 1` over
-  the morph window, crossfades body opacity, fades decorations at the
-  morph boundaries, and tints the rim light along the way.
-- [`jiggle.ts`](./jiggle.ts) — owns the **click-to-jello** wobble
-  uniforms (click point, time-since-click, amplitude). The actual GLSL
-  for the wobble lives in `morph-shader.ts` so it can layer correctly on
-  top of the morphed position.
+- [`sport-specs.ts`](./sport-specs.ts) — six `SportSpec`s (key, name,
+  `surfaceDist`, `colorAt`, rim-light tint, spin axis + speed,
+  PBR scalars). The procedural decoration math (baseball stitch curve,
+  basketball seam normals, soccer ball pentagon centers from icosahedron
+  vertices, football lace strip + cross-stitches, hockey rim band) all
+  lives inside the `colorAt` callbacks.
+- [`surface-distance.ts`](./surface-distance.ts) — analytical /
+  numerical ray-from-origin distance helpers used by the specs:
+    - `makeSphereDist(r)` — trivial.
+    - `makeFootballDist(R, zStretch, tipFalloff)` — iterative solve of
+      a prolate spheroid with quartic tip taper.
+    - `makeLatheDist(profile)` — closed-form solve through a lathe
+      profile, segment by segment (drives the bat).
+    - `makeCylinderDist(r, halfH, axis)` — capped cylinder ray hit
+      (drives the hockey puck along +X).
+- [`unified-body.ts`](./unified-body.ts) — builds the single shared
+  mesh, bakes every sport's position + color buffer, wires the
+  `MeshStandardMaterial` `onBeforeCompile` patch that does the morph +
+  wavy jello in a single hook, and exposes `setBlend`,
+  `cycleAndLoad(next)`, `poke`, `tick`. Also exports
+  `morphedSurfacePoint` for the host component's click projection.
+- [`jiggle.ts`](./jiggle.ts) — uniform owner + `pokeJiggle` /
+  `tickJiggle` helpers for the wavy-jello state. The actual GLSL is in
+  `unified-body.ts` so it can layer onto the morphed position.
+- [`show-controller.ts`](./show-controller.ts) — the hold-tween-cycle
+  loop, plus rim-light tint blending and a small "splat" poke when
+  each new sport lands.
 - [`sport-ball-morpher.tsx`](./sport-ball-morpher.tsx) — React component.
-  Sets up the renderer, scene, camera, and lighting; generates a PMREM
-  cubemap from `RoomEnvironment` so all `MeshStandardMaterial` surfaces
-  pick up real image-based lighting; wires `OrbitControls` for free
-  360° drag-to-rotate (zoom + pan disabled).
+  Sets up the renderer, scene, camera, lighting, PMREM environment from
+  `RoomEnvironment`, the unified body, the controller,
+  `OrbitControls` for free 360° camera, and the click-to-jello raycast.
 
 ## Realism: PMREM environment
 
-The single biggest visual upgrade over the bare-mesh version is the
-PMREM-generated environment map:
-
-```ts
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-```
-
-`RoomEnvironment` is a procedural studio-style scene shipped in
-`three/examples/jsm/environments`. PMREM converts it into a pre-filtered
-cubemap that `MeshStandardMaterial` samples for image-based lighting.
-Without it, the materials read flat. With it, every surface gets
-believable reflections and shading falloff for free — no HDR asset
-required.
+The materials get image-based lighting from a PMREM-generated cubemap
+of the procedural `RoomEnvironment` shipped in three.js examples — no
+HDR asset required. Without it the surfaces read flat; with it every
+sport gets believable reflections and shading falloff that morph along
+with the geometry.
 
 ## Interaction
 
 - **Drag** anywhere on the canvas to rotate the camera 360° in any
   direction.
-- **Click** any specific part of a mesh to poke it like jello — a damped
-  wave radiates from the exact click point, wobbles outward, and settles
-  back to rest in about a second. Drags are disambiguated from clicks by
-  pointer travel distance (≤ 6 px) and press duration (≤ 350 ms), so
-  orbiting and poking don't fight each other.
+- **Click** any specific part of the body to poke it — a damped
+  multi-frequency wave radiates from the click point, wobbles outward,
+  and settles back to rest in about three seconds. Drags are
+  disambiguated from clicks by pointer travel distance (≤ 6 px) and
+  press duration (≤ 350 ms), so orbiting and poking don't fight each
+  other.
 - **Pinch / scroll** is disabled (this is an inspection view, not a
   flythrough).
-- The active mesh also auto-spins on its own axis; the orbit camera is
-  independent so the user can hold a viewing angle while the object
-  turns.
-- The cycle auto-advances every ~3.0 s + ~1.4 s morph. `prefers-reduced-motion`
-  pauses it.
+- The body auto-spins on the active sport's natural axis (bat along Y,
+  football along Z, puck along X) at the active sport's speed; the
+  orbit camera is independent.
+- The cycle auto-advances every ~2.4 s + ~1.8 s morph.
+  `prefers-reduced-motion` pauses it.
 
 ## Accessibility
 
-- `prefers-reduced-motion` pauses the cycle and the per-mesh spin.
+- `prefers-reduced-motion` pauses the cycle and the auto-spin.
 - The mounted `<div>` carries `role="img"` with an `aria-label`
-  describing the gallery and the drag interaction.
+  describing the gallery and the drag/click interaction.
 - The `<VibeFallback>` square is rendered when WebGL is missing or the
   renderer fails to initialize.

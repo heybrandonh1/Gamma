@@ -1,41 +1,36 @@
 import gsap from "gsap";
 import * as THREE from "three";
 
-import type { SportMesh } from "./mesh-builders";
+import type { SportSpec } from "./sport-specs";
+import type { UnifiedSportBody } from "./unified-body";
 
 /**
- * Drives the cycle as a true silhouette-level morph.
+ * Drives the cycle on the {@link UnifiedSportBody}.
  *
- *   1. The OUTGOING mesh has its `aTargetDist` set from the INCOMING
- *      mesh's `surfaceDist`, so its vertices know where to deform to.
- *   2. The INCOMING mesh has its `aTargetDist` set from the OUTGOING
- *      mesh's `surfaceDist`, so its vertices start posed in the OUTGOING
- *      sport's silhouette.
- *   3. We tween a shared progress value `t: 0 → 1` over the morph window:
- *        - outgoing.uMorphT  = t       (rest A → B silhouette)
- *        - incoming.uMorphT  = 1 - t   (A silhouette → rest B)
- *        - outgoing.bodyOpacity = 1 - t
- *        - incoming.bodyOpacity = t
+ * The body is a single mesh whose vertex positions and colors are a
+ * smoothstep blend between two slots, A (current) and B (next). The
+ * controller's job is the simplest version of an animation loop:
  *
- * Because both meshes use the same pair of `surfaceDist` functions, their
- * silhouettes coincide at every value of `t` (`mix(A, B, t) ≡ mix(A, B,
- * t)`). The opacity crossfade is therefore visually a no-op for the
- * silhouette — the eye sees one continuously molding shape with the color
- * fading from sport A to sport B. There is no puddle pose, no scale
- * spring, and no moment where either body is invisible while the other
- * hasn't taken over.
+ *   1. Hold at slot A's rest pose for `holdSeconds`.
+ *   2. Tween `uBlend: 0 → 1` over `morphSeconds`. The body's silhouette
+ *      and color smoothly interpolate from sport A's data to sport B's
+ *      data — both per-vertex channels morph in lockstep so the eye
+ *      sees one mass molding into the next, not a crossfade.
+ *   3. On completion, ask the body to promote slot B into slot A and
+ *      load sport (current+2) into the new slot B. `uBlend` resets to 0.
+ *   4. Loop.
  *
- * Decoration meshes that don't participate in the silhouette morph
- * (currently just the baseball's instanced cross-stitches) are faded out
- * very early in the morph window and faded back in for the new sport at
- * the very end, so the eye never sees a stitch-on-football kind of
- * mismatch. Body-attached decorations (basketball seams, football laces,
- * hockey puck rim band, soccer ball panels) ride the silhouette morph on
- * the same `aDirection / aRestDist / aTargetDist` attributes the body
- * does, and so deform smoothly with it.
+ * There is no opacity crossfade, no overlapping mesh pair, no separate
+ * decoration fade — the morph is the entire transition. Everything the
+ * eye sees on the body (silhouette, base color, stitches, panels, lace
+ * strip, rim band, roughness, metalness, env-map intensity) lives in
+ * the per-vertex / per-uniform blend.
+ *
+ * The rim point-light tints alongside via `body.blendedRimColor` so the
+ * scene lighting morphs with the geometry.
  */
 
-const MORPH_SPLAT_AMP = 0.36;
+const MORPH_SPLAT_AMP = 0.34;
 
 const TMP_WOBBLE_CENTER = new THREE.Vector3();
 function randomWobbleCenter(): THREE.Vector3 {
@@ -46,278 +41,157 @@ function randomWobbleCenter(): THREE.Vector3 {
   );
 }
 
-export interface ShowFrame {
-  sportMesh: SportMesh;
-  name: string;
-  caption: string;
-  /** Hex color used to tint the rim point-light when this frame is active. */
-  rimColor: string;
-}
-
 export interface ShowController {
   start(): void;
   next(): void;
   update(deltaSeconds: number): void;
   setReducedMotion(reduced: boolean): void;
-  onFrameSettled(cb: (index: number, frame: ShowFrame) => void): () => void;
+  onFrameSettled(cb: (index: number, sport: SportSpec) => void): () => void;
+  /** Trigger a click-to-jello wobble centered at `localPoint`. */
+  poke(localPoint: THREE.Vector3, amp?: number): void;
   /**
-   * Trigger a click-to-jello wobble on the currently active mesh, centered
-   * at `localPoint` (a point in that mesh's local coordinate space).
+   * Current "incoming" sport's index — what slot B holds. The host
+   * component uses this to compute the actual morphed surface point
+   * for click raycasts.
    */
-  poke(localPoint: THREE.Vector3): void;
+  currentBlend(): { blend: number; slotA: number; slotB: number };
   dispose(): void;
 }
 
 export interface ShowControllerOptions {
-  frames: ShowFrame[];
+  body: UnifiedSportBody;
+  sports: SportSpec[];
   rimLight: THREE.PointLight;
-  /** Seconds the active mesh holds at rest before morphing to the next. */
+  /** Seconds the body holds at rest before morphing to the next sport. */
   holdSeconds?: number;
   /** Total morph duration. */
   morphSeconds?: number;
 }
 
-const TMP_FROM = new THREE.Color();
-const TMP_TO = new THREE.Color();
+const TMP_RIM_COLOR = new THREE.Color();
 
 export function createShowController(
   opts: ShowControllerOptions,
 ): ShowController {
-  const { frames, rimLight, holdSeconds = 3.0, morphSeconds = 1.4 } = opts;
+  const {
+    body,
+    sports,
+    rimLight,
+    holdSeconds = 2.4,
+    morphSeconds = 1.8,
+  } = opts;
 
-  if (frames.length === 0) {
-    throw new Error("sport-ball-morpher: at least one frame is required");
+  if (sports.length < 2) {
+    throw new Error("sport-ball-morpher: at least two sports are required");
   }
 
   let reduced = false;
   let disposed = false;
-  let currentIndex = 0;
+  // The body starts initialised at slot A = sport 0, slot B = sport 1.
+  let slotA = 0;
+  let slotB = 1;
+  let blend = 0;
   let scheduled: gsap.core.Tween | null = null;
-  const subscribers = new Set<(index: number, frame: ShowFrame) => void>();
-  const liveTweens = new Set<gsap.core.Tween>();
+  let activeTween: gsap.core.Tween | null = null;
+  const subscribers = new Set<(index: number, sport: SportSpec) => void>();
 
-  // Initial pose: frame 0 visible at rest, every other frame invisible at
-  // rest. No "puddle" pose, no pre-squashed silhouette — the morph itself
-  // is what carries the transition energy now.
-  frames.forEach((f, i) => {
-    if (i === 0) {
-      f.sportMesh.setBodyOpacity(1);
-      f.sportMesh.setDecorationOpacity(1);
-      f.sportMesh.setMorphProgress(0);
-      f.sportMesh.object.visible = true;
-    } else {
-      f.sportMesh.setBodyOpacity(0);
-      f.sportMesh.setDecorationOpacity(0);
-      f.sportMesh.setMorphProgress(0);
-      f.sportMesh.object.visible = false;
-    }
-  });
-  rimLight.color.set(frames[0].rimColor);
+  rimLight.color.set(sports[slotA].rimColor);
 
-  function notify(index: number) {
-    subscribers.forEach((cb) => cb(index, frames[index]));
-  }
-
-  function track(t: gsap.core.Tween) {
-    liveTweens.add(t);
-    return t;
+  function notifyAtRest() {
+    subscribers.forEach((cb) => cb(slotA, sports[slotA]));
   }
 
   function morphTo(nextIndex: number) {
-    if (disposed || nextIndex === currentIndex) return;
-    const prev = frames[currentIndex];
-    const next = frames[nextIndex];
+    if (disposed) return;
 
-    // Wire each mesh's morph target to the *other* sport's surface
-    // distance. Both meshes will produce the same silhouette at any given
-    // `t` because they share the same pair of distance functions.
-    prev.sportMesh.setMorphTarget(next.sportMesh.surfaceDist);
-    next.sportMesh.setMorphTarget(prev.sportMesh.surfaceDist);
-
-    // Both meshes are in the scene from the very first frame of the
-    // morph: outgoing stays fully opaque underneath while the incoming
-    // mesh fades up on top of it. We use this asymmetric crossfade
-    // (instead of `outgoing α: 1→0, incoming α: 0→1`) to keep the
-    // background from bleeding through — when both meshes are partially
-    // transparent at the same pixel, alpha compositing leaks the BG color
-    // through any gap; with outgoing pinned at α=1 the back layer is
-    // always solid and the incoming layer linearly blends its color over
-    // it. Net result: at `t = 0.5` the visible color is exactly
-    // `0.5·A + 0.5·B`, which is the clean color-morph the user expects.
-    //
-    // Render order is forced — both meshes are transparent + don't
-    // depth-write, so without an explicit order three.js's transparent
-    // sort would break ties on insertion order, which means a wrap-around
-    // morph (e.g. last sport → first sport) would draw the incoming
-    // BEHIND the outgoing and disappear entirely. `renderOrder` on the
-    // incoming Group raises every descendant Mesh in the render list so
-    // the incoming layer always paints on top, no matter the cycle
-    // direction.
-    prev.sportMesh.object.visible = true;
-    next.sportMesh.object.visible = true;
-    prev.sportMesh.object.renderOrder = 0;
-    next.sportMesh.object.renderOrder = 1;
-    prev.sportMesh.setMorphProgress(0);
-    next.sportMesh.setMorphProgress(1);
-    prev.sportMesh.setBodyOpacity(1);
-    next.sportMesh.setBodyOpacity(0);
-    next.sportMesh.setDecorationOpacity(0);
-
-    // Both silhouettes track the same `t` — `prev.uMorphT = t` and
-    // `next.uMorphT = 1 - t` produce identical envelopes at every value
-    // of `t`, so the asymmetric opacity crossfade reads as one shape
-    // continuously molding from A to B (not A fading out and B fading in
-    // separately).
     const morphState = { t: 0 };
-    track(
-      gsap.to(morphState, {
-        t: 1,
-        duration: morphSeconds,
-        ease: "power2.inOut",
-        onUpdate: () => {
-          const t = morphState.t;
-          prev.sportMesh.setMorphProgress(t);
-          next.sportMesh.setMorphProgress(1 - t);
-          // Outgoing stays solid the entire morph; incoming fades up on
-          // top of it. See the comment above the tween for why this
-          // beats a symmetric crossfade.
-          next.sportMesh.setBodyOpacity(t);
-        },
-        onComplete: () => {
-          if (disposed) return;
-          // Outgoing now hides; incoming takes over fully at rest pose.
-          // Resetting both `uMorphT` to 0 makes the rest-pose state
-          // canonical regardless of which direction the previous morph
-          // travelled. Render order resets too so the next morph in the
-          // cycle starts from a clean slate before promoting its own
-          // incoming layer.
-          prev.sportMesh.setBodyOpacity(0);
-          prev.sportMesh.setMorphProgress(0);
-          prev.sportMesh.setDecorationOpacity(0);
-          prev.sportMesh.object.visible = false;
-          prev.sportMesh.object.renderOrder = 0;
-          next.sportMesh.setBodyOpacity(1);
-          next.sportMesh.setMorphProgress(0);
-          next.sportMesh.object.renderOrder = 0;
-          currentIndex = nextIndex;
-          notify(currentIndex);
-          schedule();
-        },
-      }),
-    );
-
-    // Decoration fade-out: only the outgoing's non-morphing decorations
-    // (e.g. baseball stitches). Runs against the first ~30% of the morph
-    // so the body shape change is what dominates the visual story.
-    const prevDecoration = { v: 1 };
-    track(
-      gsap.to(prevDecoration, {
-        v: 0,
-        duration: morphSeconds * 0.3,
-        ease: "power2.in",
-        onUpdate: () => prev.sportMesh.setDecorationOpacity(prevDecoration.v),
-      }),
-    );
-
-    // Decoration fade-in: incoming's non-morphing decorations land in the
-    // last ~30% of the morph, after the body shape has visibly become the
-    // new sport.
-    const nextDecoration = { v: 0 };
-    track(
-      gsap.to(nextDecoration, {
-        v: 1,
-        duration: morphSeconds * 0.3,
-        delay: morphSeconds * 0.7,
-        ease: "power2.out",
-        onUpdate: () => next.sportMesh.setDecorationOpacity(nextDecoration.v),
-      }),
-    );
-
-    // Crossfade rim light tint across the full morph window so the
-    // lighting morphs alongside the geometry.
-    TMP_FROM.set(prev.rimColor);
-    TMP_TO.set(next.rimColor);
-    const colorState = { r: TMP_FROM.r, g: TMP_FROM.g, b: TMP_FROM.b };
-    track(
-      gsap.to(colorState, {
-        r: TMP_TO.r,
-        g: TMP_TO.g,
-        b: TMP_TO.b,
-        duration: morphSeconds,
-        ease: "power2.inOut",
-        onUpdate: () => {
-          rimLight.color.setRGB(colorState.r, colorState.g, colorState.b);
-        },
-      }),
-    );
-
-    // Splat — fire a low-amplitude jello poke on the incoming mesh just as
-    // it approaches its rest pose. This used to compensate for the puddle
-    // bounce; now it just adds a subtle "thump" of arrival on top of the
-    // (already smooth) morph.
-    track(
-      gsap.delayedCall(morphSeconds * 0.85, () => {
+    activeTween = gsap.to(morphState, {
+      t: 1,
+      duration: morphSeconds,
+      ease: "power2.inOut",
+      onUpdate: () => {
+        blend = morphState.t;
+        body.setBlend(blend);
+        body.blendedRimColor(TMP_RIM_COLOR);
+        rimLight.color.copy(TMP_RIM_COLOR);
+      },
+      onComplete: () => {
         if (disposed) return;
-        next.sportMesh.poke(randomWobbleCenter(), MORPH_SPLAT_AMP);
-      }) as unknown as gsap.core.Tween,
-    );
+        // Promote slot B into slot A and load the *new* next sport
+        // (`nextIndex`) into slot B. After this call, the body is at
+        // its rest pose for the new "current" sport, and `uBlend = 0`.
+        body.cycleAndLoad(nextIndex);
+        slotA = slotB;
+        slotB = nextIndex;
+        blend = 0;
+        rimLight.color.set(sports[slotA].rimColor);
+        notifyAtRest();
+        // A small splat poke as the new sport "lands" — the wave decay
+        // is short enough that it doesn't overlap the next morph,
+        // and the ripple gives a satisfying arrival feel.
+        body.poke(randomWobbleCenter(), MORPH_SPLAT_AMP);
+        scheduleNext();
+      },
+    });
   }
 
-  function schedule() {
+  function scheduleNext() {
     if (reduced || disposed) return;
     scheduled?.kill();
     scheduled = gsap.delayedCall(holdSeconds, () => {
       if (disposed || reduced) return;
-      const next = (currentIndex + 1) % frames.length;
-      morphTo(next);
+      // Slot A is the *current* sport. Slot B is already the next; we
+      // tween `uBlend` from 0 to 1 to morph from A into B, and once
+      // the morph completes we ask the body to promote and load the
+      // following sport into slot B.
+      const nextNextIndex = (slotB + 1) % sports.length;
+      morphTo(nextNextIndex);
     }) as unknown as gsap.core.Tween;
   }
 
   return {
     start() {
-      notify(currentIndex);
-      schedule();
+      notifyAtRest();
+      scheduleNext();
     },
     next() {
-      const ni = (currentIndex + 1) % frames.length;
-      morphTo(ni);
+      const nextNextIndex = (slotB + 1) % sports.length;
+      morphTo(nextNextIndex);
     },
-    poke(localPoint) {
+    poke(localPoint, amp) {
       if (disposed) return;
-      frames[currentIndex].sportMesh.poke(localPoint);
+      body.poke(localPoint, amp);
     },
     update(deltaSeconds: number) {
-      // Spin every visible mesh on its own axis. During the morph window
-      // both prev and next can be visible; spinning both keeps the motion
-      // continuous through the transition. Also advance any in-flight
-      // click-to-jello wobble so the wave decays at the same rate the
-      // shader is reading it at.
-      for (const f of frames) {
-        if (!f.sportMesh.object.visible) continue;
-        const ax = f.sportMesh.spinAxis;
-        f.sportMesh.object.rotation[ax] += f.sportMesh.spinSpeed * deltaSeconds;
-        f.sportMesh.tickJiggle(deltaSeconds);
-      }
+      const axis = body.currentSpinAxis();
+      const speed = body.currentSpinSpeed();
+      body.object.rotation[axis] += speed * deltaSeconds;
+      body.tick(deltaSeconds);
     },
     setReducedMotion(v: boolean) {
       reduced = v;
       if (v) {
         scheduled?.kill();
         scheduled = null;
+        activeTween?.kill();
+        activeTween = null;
       } else {
-        schedule();
+        scheduleNext();
       }
     },
     onFrameSettled(cb) {
       subscribers.add(cb);
       return () => subscribers.delete(cb);
     },
+    currentBlend() {
+      return { blend, slotA, slotB };
+    },
     dispose() {
       disposed = true;
       scheduled?.kill();
       scheduled = null;
-      liveTweens.forEach((t) => t.kill());
-      liveTweens.clear();
+      activeTween?.kill();
+      activeTween = null;
       subscribers.clear();
     },
   };

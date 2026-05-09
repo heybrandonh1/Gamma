@@ -3,28 +3,23 @@ import * as THREE from "three";
 /**
  * Click-to-jello deformation uniforms + helpers.
  *
- * The actual GLSL for the wobble lives in [morph-shader.ts](./morph-shader.ts)
- * alongside the silhouette morph term — both layer onto the same
- * `MeshStandardMaterial` vertex stage and are spliced in by a single
- * `onBeforeCompile` hook so the injection seam stays stable across
- * three.js minor versions.
+ * The actual GLSL for the wobble lives in
+ * [unified-body.ts](./unified-body.ts) alongside the silhouette morph
+ * term — both layer onto the same `MeshStandardMaterial` vertex stage
+ * and are spliced in by a single `onBeforeCompile` hook so the
+ * injection seam stays stable across three.js minor versions.
  *
  * This module owns:
  *   - the {@link JiggleUniforms} value (click point, time-since-click,
- *     amplitude) shared across every material in a single `SportMesh`,
+ *     amplitude) shared by the unified body's vertex shader,
  *   - {@link pokeJiggle} which kicks off a fresh wobble,
  *   - {@link tickJiggle} which decays the amplitude every frame and
  *     returns the GPU back to idle once the wave has settled.
  *
- * Caveats (unchanged from the previous design):
- *   - Stitches / seams that ride on `InstancedMesh` (baseball stitches) opt
- *     out of the wobble; they stay rigidly anchored to their original
- *     positions while the underlying sphere wobbles. Amplitude is small
- *     enough (a few % of unit radius) that the visual mismatch reads as
- *     intentional surface squish rather than a bug.
- *   - The `bumpMap` on the basketball is in fragment-space and doesn't
- *     update when vertices move, so its grain may "swim" subtly during
- *     the wobble. Acceptable at this amplitude / duration.
+ * The wobble is *layered on top of* the morphed vertex position, so a
+ * poke during a morph wobbles the in-between silhouette, not the rest
+ * sphere — the wave continuity between morph and impact reads as one
+ * coherent piece of jelly even mid-transformation.
  */
 
 export interface JiggleUniforms {

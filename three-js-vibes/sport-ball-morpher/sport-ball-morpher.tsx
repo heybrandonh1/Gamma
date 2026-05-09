@@ -6,19 +6,14 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import {
-  buildBaseball,
-  buildBat,
-  buildBasketball,
-  buildFootball,
-  buildSoccerBall,
-  buildHockeyPuck,
-  type SportMesh,
-} from "./mesh-builders";
-import {
   createShowController,
   type ShowController,
-  type ShowFrame,
 } from "./show-controller";
+import { SPORT_SPECS } from "./sport-specs";
+import {
+  buildUnifiedSportBody,
+  morphedSurfacePoint,
+} from "./unified-body";
 import { VibeFallback } from "../_shared/vibe-fallback";
 
 export interface SportBallMorpherProps {
@@ -93,18 +88,13 @@ export function SportBallMorpher({
     renderer.toneMappingExposure = 1.15;
 
     // PMREM-generated environment map from a procedural RoomEnvironment.
-    // No external HDR asset needed — three.js builds a soft studio-style
-    // cubemap on the fly. This is the single biggest contributor to
-    // "objects look like real physical things" because MeshStandardMaterial
-    // can finally pick up reflections / image-based lighting on its rough
-    // surfaces. Without it, materials read flat.
+    // Same as the previous version: turns flat MeshStandardMaterial
+    // surfaces into believable physical objects with image-based
+    // lighting, no HDR asset required.
     const pmrem = new THREE.PMREMGenerator(renderer);
     const envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
     scene.environment = envTexture;
 
-    // Lighting on top of the IBL: a soft ambient floor + a warm directional
-    // key for shape definition + a colored rim point light that the show
-    // controller crossfades per sport.
     const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     scene.add(ambient);
     const keyLight = new THREE.DirectionalLight(0xfff2dd, 1.1);
@@ -117,28 +107,17 @@ export function SportBallMorpher({
     rimLight.position.set(-2, -0.5, -2.5);
     scene.add(rimLight);
 
-    // Build the six sport meshes. They're added to the scene up front; the
-    // show controller toggles `visible` + scale + opacity per cycle.
-    const meshes: SportMesh[] = [
-      buildBaseball(),
-      buildBat(),
-      buildBasketball(),
-      buildFootball(),
-      buildSoccerBall(),
-      buildHockeyPuck(),
-    ];
-    meshes.forEach((m) => scene.add(m.object));
+    // The single morphing body. Holds every sport's per-vertex
+    // position + color buffer, smoothstep-interpolates between two
+    // slots (A current, B next) on a single `uBlend` uniform.
+    const body = buildUnifiedSportBody(SPORT_SPECS);
+    scene.add(body.object);
 
-    const frames: ShowFrame[] = [
-      { sportMesh: meshes[0], name: "Baseball", caption: "", rimColor: "#ffd58a" },
-      { sportMesh: meshes[1], name: "Bat", caption: "", rimColor: "#e6c089" },
-      { sportMesh: meshes[2], name: "Basketball", caption: "", rimColor: "#ff8a3a" },
-      { sportMesh: meshes[3], name: "Football", caption: "", rimColor: "#d4a36d" },
-      { sportMesh: meshes[4], name: "Soccer Ball", caption: "", rimColor: "#cfdcff" },
-      { sportMesh: meshes[5], name: "Hockey Puck", caption: "", rimColor: "#9fb4cc" },
-    ];
-
-    const controller = createShowController({ frames, rimLight });
+    const controller = createShowController({
+      body,
+      sports: SPORT_SPECS,
+      rimLight,
+    });
     controllerRef.current = controller;
     controller.setReducedMotion(reduceMotionRef.current);
     controller.start();
@@ -156,10 +135,8 @@ export function SportBallMorpher({
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
 
-    // Free 360° rotation: OrbitControls owns pointer input. Zoom + pan are
-    // disabled (we want pure inspection-grade rotation, not a flythrough).
-    // Polar limits are wide open so the user can flip the camera under and
-    // over the object — true 360° in every direction.
+    // Free 360° rotation: OrbitControls owns pointer input. Zoom + pan
+    // disabled — this is an inspection view, not a flythrough.
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
@@ -172,17 +149,24 @@ export function SportBallMorpher({
     renderer.domElement.style.touchAction = "none";
     renderer.domElement.style.cursor = "grab";
 
-    // Click-to-jello: if the user presses + releases without (much) drag we
-    // treat it as a click, raycast against every visible sport mesh, and
-    // poke the one we hit at the exact local-space point of contact. The
-    // shared OrbitControls handler still consumes drags for orbiting, so
-    // we only need to discriminate "did the pointer move during the press"
-    // — under a few px ⇒ click, more ⇒ drag and skip the wobble.
+    // Click-to-jello: raycast against the rest sphere (radius 1) to get
+    // the click direction, then ask the unified body where the *morphed*
+    // surface lives along that direction at the current blend. The poke
+    // center we hand to the shader is exactly on the visible surface, so
+    // the wavy-jello wave radiates outward from where the user actually
+    // clicked even mid-morph.
     const CLICK_MAX_PX_SQ = 36;
     const CLICK_MAX_MS = 350;
     const raycaster = new THREE.Raycaster();
     const ndc = new THREE.Vector2();
+    const tmpDir = new THREE.Vector3();
     const tmpLocal = new THREE.Vector3();
+    // Invisible proxy sphere for the click raycast — the unified body
+    // mesh's `position` attribute is the rest unit sphere (the morph
+    // happens in the shader), so we can raycast against the body
+    // directly and the hit point gives us a direction on the rest
+    // sphere. We could also use a separate proxy `Mesh`, but reusing
+    // the body itself avoids an extra scene object.
     let downX = 0;
     let downY = 0;
     let downTime = 0;
@@ -194,21 +178,24 @@ export function SportBallMorpher({
         -((clientY - rect.top) / rect.height) * 2 + 1,
       );
       raycaster.setFromCamera(ndc, camera);
-      // Test against every mesh that's currently on stage (during a morph
-      // both prev and next are visible — we want clicks to land on whichever
-      // the user actually saw under the cursor).
-      for (const m of meshes) {
-        if (!m.object.visible) continue;
-        const hits = raycaster.intersectObject(m.object, true);
-        if (hits.length === 0) continue;
-        // intersectObject returns hits sorted by distance, so [0] is the
-        // closest. Convert its world-space point into the sport mesh's
-        // local frame so the shader can use it directly as `uJiggleCenter`.
-        tmpLocal.copy(hits[0].point);
-        m.object.worldToLocal(tmpLocal);
-        m.poke(tmpLocal);
-        return;
-      }
+      const hits = raycaster.intersectObject(body.object, true);
+      if (hits.length === 0) return;
+      // Hit point is in world space on the rest unit sphere. Convert
+      // to the body's local space, normalize for direction, then
+      // project to the morphed surface so the wave originates exactly
+      // where the user clicked.
+      tmpLocal.copy(hits[0].point);
+      body.object.worldToLocal(tmpLocal);
+      tmpDir.copy(tmpLocal).normalize();
+      const blendInfo = controller.currentBlend();
+      morphedSurfacePoint(
+        tmpDir,
+        blendInfo.blend,
+        SPORT_SPECS[blendInfo.slotA],
+        SPORT_SPECS[blendInfo.slotB],
+        tmpLocal,
+      );
+      controller.poke(tmpLocal);
     };
 
     const onDown = (e: PointerEvent) => {
@@ -252,10 +239,8 @@ export function SportBallMorpher({
       window.removeEventListener("pointerup", onUp);
       controller.dispose();
       controllerRef.current = null;
-      meshes.forEach((m) => {
-        scene.remove(m.object);
-        m.dispose();
-      });
+      scene.remove(body.object);
+      body.dispose();
       scene.environment = null;
       envTexture.dispose();
       pmrem.dispose();
@@ -283,7 +268,7 @@ export function SportBallMorpher({
           "radial-gradient(ellipse at center, #1a1d35 0%, #0a0c1a 70%, #05060f 100%)",
       }}
       role="img"
-      aria-label="3D sporting equipment carousel — drag to rotate, click to jiggle"
+      aria-label="3D sporting equipment morpher — drag to rotate, click to ripple the surface"
     />
   );
 }
