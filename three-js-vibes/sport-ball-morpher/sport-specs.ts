@@ -1,7 +1,6 @@
 import * as THREE from "three";
 
 import {
-  makeCylinderDist,
   makeFootballDist,
   makeSphereDist,
   type SurfaceDistanceFn,
@@ -59,8 +58,15 @@ const C = {
   footballLace: new THREE.Color(0xf2efe4),
   soccerWhite: new THREE.Color(0xf4f4f4),
   soccerBlack: new THREE.Color(0x111111),
-  hockeyBody: new THREE.Color(0x121212),
-  hockeyRim: new THREE.Color(0x2a2a2a),
+  cricketBody: new THREE.Color(0x8a1822),
+  cricketSeam: new THREE.Color(0x2c0608),
+  cricketStitch: new THREE.Color(0xfaf3df),
+  tennisBody: new THREE.Color(0xd6e84a),
+  tennisSeam: new THREE.Color(0xf6f4e8),
+  golfBody: new THREE.Color(0xf4f3ec),
+  volleyballWhite: new THREE.Color(0xf6f6f1),
+  volleyballBlue: new THREE.Color(0x1d3a8a),
+  volleyballYellow: new THREE.Color(0xf2c63a),
 };
 
 // ---------- baseball --------------------------------------------------------
@@ -241,38 +247,197 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
-// ---------- hockey puck -----------------------------------------------------
+// ---------- cricket ball ----------------------------------------------------
 
-const HOCKEY_RADIUS = 0.85;
-const HOCKEY_HALF_HEIGHT = 0.16;
+const CRICKET_RADIUS = 0.86;
+/** Half-count of stitches around the great-circle equator seam. */
+const CRICKET_STITCH_COUNT = 84;
 
 /**
- * Cylinder along +X. The rim band is a horizontal stripe across the
- * cylinder's side, between roughly the middle 45% of the height.
- * Otherwise the puck is uniform black.
+ * The cricket ball has a single raised great-circle seam running around
+ * the equator (the `dy = 0` plane). Along that seam sits a row of small
+ * white stitches — the most distinctive visual feature, alternating
+ * between long and short stitches like the real construction.
+ *
+ * For a vertex direction `(dx, dy, dz)`:
+ *   - `|dy|` is the angular distance to the seam plane.
+ *   - `atan2(dz, dx)` is the azimuth around the seam.
+ *
+ * We darken a thin equatorial band as the seam itself, then paint
+ * discrete white stitch marks at integer multiples of the stitch
+ * angular period (with each stitch a short rectangle that's wider
+ * across the seam than along it).
  */
-function hockeyPuckColor(
+function cricketColor(dx: number, dy: number, dz: number, out: THREE.Color): void {
+  out.copy(C.cricketBody);
+  // Tip darkening at the poles (away from the seam) for a worn,
+  // hand-polished look.
+  const polish = 1 - 0.12 * Math.pow(Math.abs(dy), 4);
+  out.multiplyScalar(polish);
+
+  // Equatorial seam: darker leather where the two halves stitch
+  // together. `|dy|` is the angular distance to the seam plane on a
+  // unit sphere.
+  const seamMask = Math.exp(-(dy * dy) / 0.0008);
+  out.lerp(C.cricketSeam, seamMask * 0.55);
+
+  // Discrete stitches along the seam. Position around the seam is
+  // azimuth `phi = atan2(dz, dx)`; we compute fraction within one
+  // stitch period and paint a small white bar in the central "on"
+  // window of each period. Bar shape: wider perpendicular to the
+  // seam (along dy) than along it (along phi) so each stitch reads
+  // as a short cross-stitch.
+  const phi = Math.atan2(dz, dx);
+  const stitchPeriod = (2 * Math.PI) / CRICKET_STITCH_COUNT;
+  const stitchPos = (phi + Math.PI) / stitchPeriod;
+  const stitchFrac = stitchPos - Math.floor(stitchPos);
+  // Each stitch occupies the middle 40% of its period.
+  const stitchOn = stitchFrac > 0.30 && stitchFrac < 0.70 ? 1 : 0;
+  // Stitches sit on the seam: also require `|dy|` to be small.
+  const onSeam = Math.exp(-(dy * dy) / 0.00045);
+  out.lerp(C.cricketStitch, stitchOn * onSeam);
+}
+
+// ---------- tennis ball -----------------------------------------------------
+
+const TENNIS_RADIUS = 0.92;
+const TENNIS_SEAM_AMP = 0.62;
+
+/**
+ * The tennis ball's wishbone seam is the same `φ = A · cos(2θ)` figure-8
+ * curve that real tennis balls use (and the same family the baseball's
+ * seam belongs to), but rendered as a thicker continuous painted
+ * white line rather than discrete stitches — that's what reads as
+ * "tennis ball seam" vs. "baseball stitches".
+ */
+const TENNIS_SEAM_SAMPLES: { x: number; y: number; z: number }[] = (() => {
+  const out: { x: number; y: number; z: number }[] = [];
+  const N = 240;
+  for (let i = 0; i < N; i++) {
+    const t = (i / N) * Math.PI * 2;
+    const phi = Math.cos(2 * t) * TENNIS_SEAM_AMP;
+    out.push({
+      x: Math.cos(phi) * Math.cos(t),
+      y: Math.sin(phi),
+      z: Math.cos(phi) * Math.sin(t),
+    });
+  }
+  return out;
+})();
+
+function tennisColor(dx: number, dy: number, dz: number, out: THREE.Color): void {
+  out.copy(C.tennisBody);
+
+  // Subtle felt variation: very gentle radial falloff toward the poles
+  // so the felted yellow doesn't read as flat plastic.
+  const feltShade = 1 - 0.06 * Math.abs(dy);
+  out.multiplyScalar(feltShade);
+
+  // Distance to nearest seam sample on the figure-8 curve.
+  let bestDot = -2;
+  for (const sample of TENNIS_SEAM_SAMPLES) {
+    const d = sample.x * dx + sample.y * dy + sample.z * dz;
+    if (d > bestDot) bestDot = d;
+  }
+  const ang = Math.acos(Math.min(1, Math.max(-1, bestDot)));
+  // Wider, smoother seam than the baseball — paints continuously
+  // instead of in stitch beats.
+  const seamMask = Math.exp(-(ang * ang) / 0.005);
+  out.lerp(C.tennisSeam, Math.min(1, seamMask * 1.05));
+}
+
+// ---------- golf ball -------------------------------------------------------
+
+const GOLF_RADIUS = 0.84;
+const GOLF_DIMPLE_COUNT = 320;
+/** Angular radius of each dimple on the unit sphere (radians). */
+const GOLF_DIMPLE_R = 0.085;
+
+/**
+ * Fibonacci-sphere distribution of dimple centers. The golden-angle
+ * spiral gives near-uniform density across the whole sphere, which
+ * is what makes the dimple pattern read as regular without any
+ * obvious latitude / longitude grid — the same trick the real
+ * dimple-pattern designs lean on.
+ *
+ * 320 dimples × ~33k vertices = ~10M dot-products at mount time,
+ * which JS handles in ~150 ms — paid once, never per frame.
+ */
+const GOLF_DIMPLE_CENTERS: [number, number, number][] = (() => {
+  const out: [number, number, number][] = [];
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < GOLF_DIMPLE_COUNT; i++) {
+    const y = 1 - (i / (GOLF_DIMPLE_COUNT - 1)) * 2;
+    const r = Math.sqrt(1 - y * y);
+    const theta = goldenAngle * i;
+    out.push([Math.cos(theta) * r, y, Math.sin(theta) * r]);
+  }
+  return out;
+})();
+
+function golfColor(dx: number, dy: number, dz: number, out: THREE.Color): void {
+  out.copy(C.golfBody);
+
+  // Find the nearest dimple center on the unit sphere.
+  let bestDot = -2;
+  for (const c of GOLF_DIMPLE_CENTERS) {
+    const d = c[0] * dx + c[1] * dy + c[2] * dz;
+    if (d > bestDot) bestDot = d;
+  }
+  const ang = Math.acos(Math.min(1, Math.max(-1, bestDot)));
+
+  // Dimple shading: a darker "cup" inside each dimple's angular disk
+  // with a slightly brighter rim where neighbouring dimples meet.
+  // The actual depth is in the lighting, but this fakes the dimple
+  // shadow well enough that the eye reads the pattern as
+  // hemispherical pits.
+  if (ang < GOLF_DIMPLE_R) {
+    const t = ang / GOLF_DIMPLE_R;
+    // Bowl: 1 at center, 0 at rim.
+    const bowl = 1 - t * t;
+    // Rim brightness band near the boundary.
+    const rim = Math.exp(-Math.pow(t - 0.85, 2) * 26);
+    out.multiplyScalar(1 - 0.18 * bowl + 0.04 * rim);
+  }
+}
+
+// ---------- volleyball ------------------------------------------------------
+
+const VOLLEYBALL_RADIUS = 0.93;
+const VOLLEYBALL_PANELS = 6;
+/**
+ * Six "lune" panels arranged around the +y / −y poles, alternating
+ * white / blue / white / yellow / white / blue. This is a stylized
+ * tribute to the classic Mikasa V200W tri-color pattern — six panels
+ * meeting at two opposite poles, each panel a 60°-wide stripe of
+ * longitude. We paint a darker stitched seam at every panel boundary.
+ */
+const VOLLEYBALL_BAND_COLORS: THREE.Color[] = [
+  C.volleyballWhite,
+  C.volleyballBlue,
+  C.volleyballWhite,
+  C.volleyballYellow,
+  C.volleyballWhite,
+  C.volleyballBlue,
+];
+
+function volleyballColor(
   dx: number,
-  dy: number,
+  _dy: number,
   dz: number,
   out: THREE.Color,
 ): void {
-  // Decide if this direction hits the cylinder side (rim) or one of the
-  // flat caps.
-  const rho = Math.sqrt(dy * dy + dz * dz);
-  const tSide = rho > 1e-6 ? HOCKEY_RADIUS / rho : Infinity;
-  const tCap = Math.abs(dx) > 1e-6 ? HOCKEY_HALF_HEIGHT / Math.abs(dx) : Infinity;
-  if (tSide < tCap) {
-    // We're on the cylinder side. The rim band is the middle 45% of the
-    // side's "x extent"; for a side hit, x_at_t = dx · tSide ∈
-    // [-halfHeight, halfHeight]. The band lives in the inner 45%.
-    const xOnSide = dx * tSide;
-    const t = Math.abs(xOnSide) / HOCKEY_HALF_HEIGHT;
-    const onBand = t < 0.45 ? 1 : 0;
-    out.copy(C.hockeyBody).lerp(C.hockeyRim, onBand * 0.55);
-  } else {
-    out.copy(C.hockeyBody);
-  }
+  // Azimuth around y, normalized to 0..VOLLEYBALL_PANELS.
+  const phi = Math.atan2(dz, dx);
+  const bandPos = ((phi + Math.PI) / (2 * Math.PI)) * VOLLEYBALL_PANELS;
+  const bandIdx = Math.floor(bandPos);
+  const bandFrac = bandPos - bandIdx;
+  out.copy(VOLLEYBALL_BAND_COLORS[bandIdx % VOLLEYBALL_PANELS]);
+
+  // Soft stitched seam at each panel boundary.
+  const distToBoundary = Math.min(bandFrac, 1 - bandFrac);
+  const seamFade = Math.exp(-(distToBoundary * distToBoundary) / 0.0012);
+  out.multiplyScalar(1 - 0.28 * seamFade);
 }
 
 // ---------- catalogue -------------------------------------------------------
@@ -331,15 +496,60 @@ export const SPORT_SPECS: SportSpec[] = [
     envMapIntensity: 1.0,
   },
   {
-    key: "hockey",
-    name: "Hockey Puck",
-    surfaceDist: makeCylinderDist(HOCKEY_RADIUS, HOCKEY_HALF_HEIGHT, "x"),
-    colorAt: hockeyPuckColor,
-    rimColor: "#9fb4cc",
-    spinAxis: "x",
-    spinSpeed: 0.8,
-    roughness: 0.45,
-    metalness: 0.15,
-    envMapIntensity: 0.6,
+    key: "cricket",
+    name: "Cricket Ball",
+    surfaceDist: makeSphereDist(CRICKET_RADIUS),
+    colorAt: cricketColor,
+    rimColor: "#ff8a7a",
+    spinAxis: "y",
+    spinSpeed: 0.7,
+    // Tightly polished leather: lower roughness than the baseball, a
+    // hint of metalness for the deep-red sheen real cricket balls
+    // pick up after a few overs.
+    roughness: 0.32,
+    metalness: 0.08,
+    envMapIntensity: 1.05,
+  },
+  {
+    key: "tennis",
+    name: "Tennis Ball",
+    surfaceDist: makeSphereDist(TENNIS_RADIUS),
+    colorAt: tennisColor,
+    rimColor: "#e8ff8a",
+    spinAxis: "y",
+    spinSpeed: 0.6,
+    // Felt is matte — high roughness, no metalness — so the
+    // rim-light reads as a soft halo rather than a sharp specular.
+    roughness: 0.95,
+    metalness: 0,
+    envMapIntensity: 0.55,
+  },
+  {
+    key: "golf",
+    name: "Golf Ball",
+    surfaceDist: makeSphereDist(GOLF_RADIUS),
+    colorAt: golfColor,
+    rimColor: "#f0f4ff",
+    spinAxis: "y",
+    spinSpeed: 0.85,
+    // Slick injection-molded plastic over a hard core — low roughness
+    // for sharp specular highlights that move across the dimple
+    // pattern as the camera orbits.
+    roughness: 0.28,
+    metalness: 0.03,
+    envMapIntensity: 1.1,
+  },
+  {
+    key: "volleyball",
+    name: "Volleyball",
+    surfaceDist: makeSphereDist(VOLLEYBALL_RADIUS),
+    colorAt: volleyballColor,
+    rimColor: "#ffd56a",
+    spinAxis: "y",
+    spinSpeed: 0.55,
+    // Synthetic leather — between matte and glossy.
+    roughness: 0.55,
+    metalness: 0.02,
+    envMapIntensity: 0.9,
   },
 ];

@@ -1,12 +1,12 @@
 # Sport Ball Morpher
 
-A 3D showcase of five procedural sport-equipment shapes — baseball,
-basketball, football, soccer ball, hockey puck — that auto-cycle on a lit
-stage as **one continuously morphing mass**. Nothing crossfades, nothing
-disappears; the body smoothly molds from each sport into the next with its
-silhouette, color, surface decorations, and material response all changing
-on a single per-vertex blend, like a lava lamp where each blob remembers
-how to be a baseball or a football.
+A 3D showcase of eight procedural sport balls — baseball, basketball,
+football, soccer ball, cricket ball, tennis ball, golf ball, volleyball
+— that auto-cycle on a lit stage as **one continuously morphing mass**.
+Nothing crossfades, nothing disappears; the body smoothly molds from each
+sport into the next with its silhouette, color, surface decorations, and
+material response all changing on a single per-vertex blend, like a lava
+lamp where each blob remembers how to be a baseball or a tennis ball.
 
 The viewer can grab the canvas and freely orbit the camera 360° to inspect
 the active object from any angle. Two ways to play with the surface:
@@ -140,21 +140,38 @@ as the body spins beneath it.
 
 ## Anatomy
 
-- [`sport-specs.ts`](./sport-specs.ts) — six `SportSpec`s (key, name,
-  `surfaceDist`, `colorAt`, rim-light tint, spin axis + speed,
-  PBR scalars). The procedural decoration math (baseball stitch curve,
-  basketball seam normals, soccer ball pentagon centers from icosahedron
-  vertices, football lace strip + cross-stitches, hockey rim band) all
-  lives inside the `colorAt` callbacks.
+- [`sport-specs.ts`](./sport-specs.ts) — eight `SportSpec`s (key, name,
+  `surfaceDist`, `colorAt`, rim-light tint, spin axis + speed, PBR
+  scalars). All the procedural decoration math lives inside the
+  `colorAt` callbacks:
+    - **Baseball**: figure-8 (`φ = A · cos 2θ`) seam curve sampled at
+      240 points; stitches modulated by an alternating-slash phase
+      pattern along the seam.
+    - **Basketball**: four great-circle seam normals, painted as
+      angular-distance falloff to the nearest seam plane.
+    - **Football**: prolate-spheroid surface evaluation + lace strip
+      with 7 cross stitches on the +y meridian.
+    - **Soccer ball**: 12 icosahedron-vertex pentagon centers; black
+      inside each pentagon's angular disk, white between.
+    - **Cricket ball**: equatorial seam plane + 84 discrete white
+      stitches paced by `phi = atan2(dz, dx)` periodicity.
+    - **Tennis ball**: same `φ = A · cos 2θ` figure-8 family as the
+      baseball but rendered as a thicker continuous painted seam
+      instead of stitch beats.
+    - **Golf ball**: 320 dimple centers placed on the sphere via
+      golden-angle Fibonacci spiral; each dimple paints a darker
+      "bowl" with a slightly brighter rim band.
+    - **Volleyball**: six longitudinal "lune" panels in white / blue /
+      yellow, with a stitched darker seam at every panel boundary.
 - [`surface-distance.ts`](./surface-distance.ts) — analytical /
   numerical ray-from-origin distance helpers used by the specs:
-    - `makeSphereDist(r)` — trivial.
+    - `makeSphereDist(r)` — trivial; drives baseball, basketball,
+      soccer, cricket, tennis, golf, volleyball.
     - `makeFootballDist(R, zStretch, tipFalloff)` — iterative solve of
       a prolate spheroid with quartic tip taper.
-    - `makeLatheDist(profile)` — closed-form solve through a lathe
-      profile, segment by segment (drives the bat).
-    - `makeCylinderDist(r, halfH, axis)` — capped cylinder ray hit
-      (drives the hockey puck along +X).
+    - `makeLatheDist(profile)` and `makeCylinderDist(r, halfH, axis)`
+      stay exported for future shapes (capped cylinders, lathe-swept
+      bats / pins) but no current sport uses them.
 - [`unified-body.ts`](./unified-body.ts) — builds the single shared
   mesh, bakes every sport's position + color buffer, wires the
   `MeshStandardMaterial` `onBeforeCompile` patch that does the morph +
@@ -196,8 +213,8 @@ with the geometry.
 - **Pinch / scroll** is disabled (this is an inspection view, not a
   flythrough).
 - The body auto-spins on the active sport's natural axis (football
-  along Z, puck along X, the rest along Y) at the active sport's
-  speed; the orbit camera is independent.
+  along Z, the rest along Y) at the active sport's speed; the orbit
+  camera is independent.
 - The cycle auto-advances every ~2.4 s + ~1.8 s morph.
   `prefers-reduced-motion` pauses it.
 

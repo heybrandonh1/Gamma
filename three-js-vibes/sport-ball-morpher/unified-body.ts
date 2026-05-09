@@ -52,15 +52,19 @@ import type { SportSpec } from "./sport-specs";
  */
 
 /**
- * Resolution of the shared sphere. 192 width × 96 height ≈ 18 624
- * vertices. Dense enough to render every sport's silhouette cleanly
- * (including the bat's lathe profile, the football's tip taper, the
- * hockey puck's right-angle rim, and the soccer ball's pentagon
- * boundaries) while still GPU-friendly. The whole vibe runs on a
- * single draw call regardless of sport.
+ * Resolution of the shared sphere. 256 width × 128 height ≈ 33 153
+ * vertices, ~1.4° of angular spacing at the equator. That's the
+ * resolution at which the finer per-sport details (golf-ball dimples,
+ * cricket-ball stitches, volleyball panel seams, soccer pentagon
+ * boundaries, football tip taper) render as crisp painted patterns
+ * instead of fuzzy noise. The whole vibe still runs on a single
+ * draw call.
+ *
+ * Mount-time bake cost grows linearly: ~150 ms across all sports on
+ * a current laptop, paid once.
  */
-const SPHERE_W = 192;
-const SPHERE_H = 96;
+const SPHERE_W = 256;
+const SPHERE_H = 128;
 
 export interface UnifiedSportBody {
   object: THREE.Mesh;
