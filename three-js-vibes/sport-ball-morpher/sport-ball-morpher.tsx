@@ -172,11 +172,59 @@ export function SportBallMorpher({
     renderer.domElement.style.touchAction = "none";
     renderer.domElement.style.cursor = "grab";
 
-    const onDown = () => {
-      renderer.domElement.style.cursor = "grabbing";
+    // Click-to-jello: if the user presses + releases without (much) drag we
+    // treat it as a click, raycast against every visible sport mesh, and
+    // poke the one we hit at the exact local-space point of contact. The
+    // shared OrbitControls handler still consumes drags for orbiting, so
+    // we only need to discriminate "did the pointer move during the press"
+    // — under a few px ⇒ click, more ⇒ drag and skip the wobble.
+    const CLICK_MAX_PX_SQ = 36;
+    const CLICK_MAX_MS = 350;
+    const raycaster = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
+    const tmpLocal = new THREE.Vector3();
+    let downX = 0;
+    let downY = 0;
+    let downTime = 0;
+
+    const handleClick = (clientX: number, clientY: number) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      ndc.set(
+        ((clientX - rect.left) / rect.width) * 2 - 1,
+        -((clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(ndc, camera);
+      // Test against every mesh that's currently on stage (during a morph
+      // both prev and next are visible — we want clicks to land on whichever
+      // the user actually saw under the cursor).
+      for (const m of meshes) {
+        if (!m.object.visible) continue;
+        const hits = raycaster.intersectObject(m.object, true);
+        if (hits.length === 0) continue;
+        // intersectObject returns hits sorted by distance, so [0] is the
+        // closest. Convert its world-space point into the sport mesh's
+        // local frame so the shader can use it directly as `uJiggleCenter`.
+        tmpLocal.copy(hits[0].point);
+        m.object.worldToLocal(tmpLocal);
+        m.poke(tmpLocal);
+        return;
+      }
     };
-    const onUp = () => {
+
+    const onDown = (e: PointerEvent) => {
+      renderer.domElement.style.cursor = "grabbing";
+      downX = e.clientX;
+      downY = e.clientY;
+      downTime = performance.now();
+    };
+    const onUp = (e: PointerEvent) => {
       renderer.domElement.style.cursor = "grab";
+      const dx = e.clientX - downX;
+      const dy = e.clientY - downY;
+      const dt = performance.now() - downTime;
+      if (dt <= CLICK_MAX_MS && dx * dx + dy * dy <= CLICK_MAX_PX_SQ) {
+        handleClick(e.clientX, e.clientY);
+      }
     };
     renderer.domElement.addEventListener("pointerdown", onDown);
     window.addEventListener("pointerup", onUp);
@@ -235,7 +283,7 @@ export function SportBallMorpher({
           "radial-gradient(ellipse at center, #1a1d35 0%, #0a0c1a 70%, #05060f 100%)",
       }}
       role="img"
-      aria-label="3D sporting equipment carousel — drag to rotate"
+      aria-label="3D sporting equipment carousel — drag to rotate, click to jiggle"
     />
   );
 }

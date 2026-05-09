@@ -48,6 +48,13 @@ export interface ShowController {
   update(deltaSeconds: number): void;
   setReducedMotion(reduced: boolean): void;
   onFrameSettled(cb: (index: number, frame: ShowFrame) => void): () => void;
+  /**
+   * Trigger a click-to-jello wobble on the currently active mesh, centered
+   * at `localPoint` (a point in that mesh's local coordinate space).
+   * Returns the active frame's mesh so the caller can do further work
+   * (e.g. logging) if desired.
+   */
+  poke(localPoint: THREE.Vector3): void;
   dispose(): void;
 }
 
@@ -217,14 +224,21 @@ export function createShowController(
       const ni = (currentIndex + 1) % frames.length;
       morphTo(ni);
     },
+    poke(localPoint) {
+      if (disposed) return;
+      frames[currentIndex].sportMesh.poke(localPoint);
+    },
     update(deltaSeconds: number) {
       // Spin every visible mesh on its own axis. During the crossfade window
       // both prev and next can be visible; spinning both keeps the motion
-      // continuous through the transition.
+      // continuous through the transition. Also advance any in-flight
+      // click-to-jello wobble so the wave decays at the same rate the
+      // shader is reading it at.
       for (const f of frames) {
         if (!f.sportMesh.object.visible) continue;
         const ax = f.sportMesh.spinAxis;
         f.sportMesh.object.rotation[ax] += f.sportMesh.spinSpeed * deltaSeconds;
+        f.sportMesh.tickJiggle(deltaSeconds);
       }
     },
     setReducedMotion(v: boolean) {

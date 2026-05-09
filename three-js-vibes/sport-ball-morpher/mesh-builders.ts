@@ -1,16 +1,28 @@
 import * as THREE from "three";
 
+import {
+  attachJiggleShader,
+  createJiggleUniforms,
+  pokeJiggle,
+  tickJiggle,
+  type JiggleUniforms,
+} from "./jiggle";
+
 /**
  * Procedural 3D meshes for the six sporting objects. Each builder returns a
  * `SportMesh` that exposes:
  *
- *   - `object`     — a `Group` (so we can layer e.g. a baseball with its
- *                    stitch tubes, or a soccer ball with multi-material faces)
- *   - `spinAxis`   — which axis the show-controller should auto-rotate on
- *   - `spinSpeed`  — radians/sec
- *   - `setOpacity` — traverses the group and sets opacity on every material
- *                    (handles arrays for multi-material meshes too)
- *   - `dispose`    — traverses and disposes every geometry/material
+ *   - `object`      — a `Group` (so we can layer e.g. a baseball with its
+ *                     stitch tubes, or a soccer ball with multi-material faces)
+ *   - `spinAxis`    — which axis the show-controller should auto-rotate on
+ *   - `spinSpeed`   — radians/sec
+ *   - `setOpacity`  — traverses the group and sets opacity on every material
+ *                     (handles arrays for multi-material meshes too)
+ *   - `poke`        — kicks off a click-to-jello wobble centered on a local
+ *                     point (called by the controller when the user clicks
+ *                     on the active mesh)
+ *   - `tickJiggle`  — advances the wobble each frame
+ *   - `dispose`     — traverses and disposes every geometry/material
  *
  * Realism notes: surface detail (baseball stitches, basketball seams, football
  * laces, soccer-ball panels, hockey-puck rim band) is procedural — no textures,
@@ -24,6 +36,14 @@ export interface SportMesh {
   spinAxis: "x" | "y" | "z";
   spinSpeed: number;
   setOpacity(value: number): void;
+  /**
+   * Trigger a fresh jello wobble centered at `localPoint` (a point in this
+   * mesh's local coordinate space — typically returned by raycasting and
+   * then `worldToLocal`-ed).
+   */
+  poke(localPoint: THREE.Vector3): void;
+  /** Advance the in-flight wobble. Cheap no-op once the wobble has decayed. */
+  tickJiggle(deltaSeconds: number): void;
   dispose(): void;
 }
 
@@ -107,9 +127,10 @@ function makeStandardMaterial(
     metalness?: number;
     flat?: boolean;
     envMapIntensity?: number;
+    jiggle?: JiggleUniforms;
   } = {},
 ): THREE.MeshStandardMaterial {
-  return new THREE.MeshStandardMaterial({
+  const material = new THREE.MeshStandardMaterial({
     color,
     roughness: opts.roughness ?? 0.5,
     metalness: opts.metalness ?? 0.05,
@@ -118,6 +139,8 @@ function makeStandardMaterial(
     opacity: 0,
     envMapIntensity: opts.envMapIntensity ?? 1.0,
   });
+  if (opts.jiggle) attachJiggleShader(material, opts.jiggle);
+  return material;
 }
 
 // ---------- baseball --------------------------------------------------------
@@ -146,11 +169,13 @@ function makeStandardMaterial(
 export function buildBaseball(): SportMesh {
   const group = new THREE.Group();
   const radius = 0.85;
+  const jiggle = createJiggleUniforms();
 
   const sphereGeo = new THREE.SphereGeometry(radius, 128, 128);
   const sphereMat = makeStandardMaterial(0xfaf6ed, {
     roughness: 0.62,
     envMapIntensity: 0.85,
+    jiggle,
   });
   group.add(new THREE.Mesh(sphereGeo, sphereMat));
 
@@ -219,6 +244,12 @@ export function buildBaseball(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
+    poke(p) {
+      pokeJiggle(jiggle, p);
+    },
+    tickJiggle(d) {
+      tickJiggle(jiggle, d);
+    },
     dispose() {
       disposeRecursive(group);
     },
@@ -234,6 +265,7 @@ export function buildBaseball(): SportMesh {
  */
 export function buildBat(): SportMesh {
   const group = new THREE.Group();
+  const jiggle = createJiggleUniforms();
   const profile: THREE.Vector2[] = [
     new THREE.Vector2(0.0, -1.4),
     new THREE.Vector2(0.18, -1.4),
@@ -251,6 +283,7 @@ export function buildBat(): SportMesh {
   const material = makeStandardMaterial(0xc89668, {
     roughness: 0.55,
     envMapIntensity: 0.9,
+    jiggle,
   });
   const mesh = new THREE.Mesh(geometry, material);
   group.add(mesh);
@@ -260,6 +293,12 @@ export function buildBat(): SportMesh {
     spinSpeed: 0.6,
     setOpacity(v) {
       setOpacityRecursive(group, v);
+    },
+    poke(p) {
+      pokeJiggle(jiggle, p);
+    },
+    tickJiggle(d) {
+      tickJiggle(jiggle, d);
     },
     dispose() {
       disposeRecursive(group);
@@ -279,6 +318,7 @@ export function buildBat(): SportMesh {
 export function buildBasketball(): SportMesh {
   const group = new THREE.Group();
   const radius = 0.95;
+  const jiggle = createJiggleUniforms();
 
   const bumpMap = makePebbleBumpMap(512, 0.05);
 
@@ -293,13 +333,16 @@ export function buildBasketball(): SportMesh {
     transparent: true,
     opacity: 0,
   });
+  attachJiggleShader(sphereMat, jiggle);
   group.add(new THREE.Mesh(sphereGeo, sphereMat));
 
   // Recessed-looking seam grooves: dark color, slightly thicker tube than
-  // before so they're visible against the pebbled surface.
+  // before so they're visible against the pebbled surface. The seams
+  // jiggle alongside the sphere so the ball reads as a single soft body.
   const seamMat = makeStandardMaterial(0x1f0e07, {
     roughness: 0.7,
     envMapIntensity: 0.45,
+    jiggle,
   });
 
   const greatCircle = (normal: THREE.Vector3) => {
@@ -338,6 +381,12 @@ export function buildBasketball(): SportMesh {
     setOpacity(v) {
       setOpacityRecursive(group, v);
     },
+    poke(p) {
+      pokeJiggle(jiggle, p);
+    },
+    tickJiggle(d) {
+      tickJiggle(jiggle, d);
+    },
     dispose() {
       disposeRecursive(group);
       bumpMap.dispose();
@@ -367,6 +416,7 @@ export function buildBasketball(): SportMesh {
  */
 export function buildFootball(): SportMesh {
   const group = new THREE.Group();
+  const jiggle = createJiggleUniforms();
 
   const SPHERE_R = 0.7;
   const Z_STRETCH = 1.7;
@@ -408,13 +458,16 @@ export function buildFootball(): SportMesh {
     transparent: true,
     opacity: 0,
   });
+  attachJiggleShader(ballMat, jiggle);
   group.add(new THREE.Mesh(ballGeo, ballMat));
 
   // White stripe bands near each tip — thick TubeGeometry rings whose radius
-  // matches the deformed ellipsoid's local cross-section at that z.
+  // matches the deformed ellipsoid's local cross-section at that z. They
+  // share the ball's jiggle so the rings wobble in sync with the leather.
   const stripeMat = makeStandardMaterial(0xefe9da, {
     roughness: 0.55,
     envMapIntensity: 0.7,
+    jiggle,
   });
   const stripeOffset = 0.005;
   for (const stripeZ of [0.88, -0.88]) {
@@ -437,6 +490,7 @@ export function buildFootball(): SportMesh {
   const laceMat = makeStandardMaterial(0xf5f1e6, {
     roughness: 0.4,
     envMapIntensity: 0.7,
+    jiggle,
   });
   const NUM_LACES = 7;
   const LACE_SPAN = 0.55;
@@ -461,6 +515,12 @@ export function buildFootball(): SportMesh {
     spinSpeed: 0.55,
     setOpacity(v) {
       setOpacityRecursive(group, v);
+    },
+    poke(p) {
+      pokeJiggle(jiggle, p);
+    },
+    tickJiggle(d) {
+      tickJiggle(jiggle, d);
     },
     dispose() {
       disposeRecursive(group);
@@ -637,16 +697,19 @@ function buildTruncatedIcosahedronGeometry(radius: number): THREE.BufferGeometry
 export function buildSoccerBall(): SportMesh {
   const group = new THREE.Group();
   const radius = 0.9;
+  const jiggle = createJiggleUniforms();
 
   // Base ball with the truncated-icosahedron panel coloring.
   const panelGeo = buildTruncatedIcosahedronGeometry(radius * 0.998);
   const blackPanelMat = makeStandardMaterial(0x111111, {
     roughness: 0.6,
     envMapIntensity: 0.6,
+    jiggle,
   });
   const whitePanelMat = makeStandardMaterial(0xf4f4f4, {
     roughness: 0.55,
     envMapIntensity: 0.85,
+    jiggle,
   });
   const panels = new THREE.Mesh(panelGeo, [blackPanelMat, whitePanelMat]);
   group.add(panels);
@@ -655,7 +718,7 @@ export function buildSoccerBall(): SportMesh {
   // cracks at the seams (it shouldn't with the sphere projection, but the
   // underlay is cheap insurance).
   const underGeo = new THREE.SphereGeometry(radius * 0.97, 64, 64);
-  const underMat = makeStandardMaterial(0x222222, { roughness: 0.7 });
+  const underMat = makeStandardMaterial(0x222222, { roughness: 0.7, jiggle });
   group.add(new THREE.Mesh(underGeo, underMat));
 
   return {
@@ -664,6 +727,12 @@ export function buildSoccerBall(): SportMesh {
     spinSpeed: 0.55,
     setOpacity(v) {
       setOpacityRecursive(group, v);
+    },
+    poke(p) {
+      pokeJiggle(jiggle, p);
+    },
+    tickJiggle(d) {
+      tickJiggle(jiggle, d);
     },
     dispose() {
       disposeRecursive(group);
@@ -681,6 +750,7 @@ export function buildSoccerBall(): SportMesh {
  */
 export function buildHockeyPuck(): SportMesh {
   const group = new THREE.Group();
+  const jiggle = createJiggleUniforms();
   const r = 0.85;
   const h = 0.32;
 
@@ -689,6 +759,7 @@ export function buildHockeyPuck(): SportMesh {
     roughness: 0.45,
     metalness: 0.15,
     envMapIntensity: 0.6,
+    jiggle,
   });
   group.add(new THREE.Mesh(bodyGeo, bodyMat));
 
@@ -698,6 +769,7 @@ export function buildHockeyPuck(): SportMesh {
   const bandMat = makeStandardMaterial(0x2a2a2a, {
     roughness: 0.55,
     metalness: 0.05,
+    jiggle,
   });
   group.add(new THREE.Mesh(bandGeo, bandMat));
 
@@ -712,6 +784,12 @@ export function buildHockeyPuck(): SportMesh {
     spinSpeed: 0.8,
     setOpacity(v) {
       setOpacityRecursive(group, v);
+    },
+    poke(p) {
+      pokeJiggle(jiggle, p);
+    },
+    tickJiggle(d) {
+      tickJiggle(jiggle, d);
     },
     dispose() {
       disposeRecursive(group);

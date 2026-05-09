@@ -4,7 +4,8 @@ A 3D showcase of six procedural sport-equipment meshes — baseball, bat,
 basketball, football, soccer ball, hockey puck — that auto-cycle on a lit
 stage with a jelly-style squash/stretch morph between each one. The user can
 grab the canvas and freely orbit the camera 360° to inspect the active object
-from any angle.
+from any angle, and **click anywhere on a mesh to poke it like jello** —
+the surface ripples outward from the click point and settles back to rest.
 
 Lives inside the [Gamma](https://github.com/heybrandonh1/Gamma) submodule and
 mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
@@ -39,6 +40,15 @@ mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
   meshes are visible during the morph window, so the transition reads as
   one shape squishing into the next rather than one disappearing and another
   appearing. The rim point-light tint crossfades in lockstep.
+- `jiggle.ts` — owns the **click-to-jello** wobble. Each `SportMesh` carries
+  its own `JiggleUniforms` ({ center, time-since-click, amplitude }) that
+  every material on the mesh shares. `attachJiggleShader` patches a
+  `MeshStandardMaterial`'s vertex stage via `onBeforeCompile` to inject a
+  damped sine wave centered at the click point, falling off radially with
+  `e^(-1.6·d)` and decaying temporally with `e^(-3.5·t)`. When the user
+  clicks, `pokeJiggle` resets time → 0 and amplitude → peak; the wobble
+  rings out for ~1 s and settles to zero, at which point we early-out the
+  GPU work to keep things idle.
 - `sport-ball-morpher.tsx` — React component. Sets up the renderer, scene,
   camera, and lighting; generates a PMREM cubemap from `RoomEnvironment` so
   all `MeshStandardMaterial` surfaces pick up real image-based lighting;
@@ -63,6 +73,11 @@ reflections and shading falloff for free — no HDR asset required.
 ## Interaction
 
 - **Drag** anywhere on the canvas to rotate the camera 360° in any direction.
+- **Click** any specific part of a mesh to poke it like jello — a damped
+  wave radiates from the exact click point, wobbles outward, and settles
+  back to rest in about a second. Drags are disambiguated from clicks by
+  pointer travel distance (≤ 6 px) and press duration (≤ 350 ms), so
+  orbiting and poking don't fight each other.
 - **Pinch / scroll** is disabled (this is an inspection view, not a flythrough).
 - The active mesh also auto-spins on its own axis; the orbit camera is
   independent so the user can hold a viewing angle while the object turns.

@@ -1,0 +1,138 @@
+import * as THREE from "three";
+
+/**
+ * Click-to-jello deformation.
+ *
+ * When the user clicks anywhere on a sport mesh, we kick off a damped wave
+ * that originates at the click point and ripples outward across the surface,
+ * pushing each vertex along its normal. The result feels like poking a piece
+ * of jello: the spot you press wobbles the most, the rest of the body
+ * trembles in sympathy, and the whole thing settles back to rest in about a
+ * second.
+ *
+ * Implementation: every `MeshStandardMaterial` that participates in the
+ * jiggle gets its vertex shader patched via `onBeforeCompile` to inject a
+ * displacement term that reads from three shared uniforms — click point,
+ * time-since-click, and peak amplitude. The same `JiggleUniforms` object is
+ * shared across every material in a single `SportMesh`, so all sub-meshes
+ * (sphere + seams, panels + underlay, etc.) deform in lockstep from the
+ * exact same wave.
+ *
+ * Why not whole-group scale instead? A scale impulse moves the entire mesh
+ * uniformly — it can't tell the eye *where* the user pressed. Per-vertex
+ * shader displacement is what makes "click any specific part" land: the
+ * wobble is centered on the click point and falls off radially, which is
+ * the kinetic signature of poking a soft body.
+ *
+ * Caveats:
+ *   - Stitches / seams that ride on `InstancedMesh` (baseball stitches) opt
+ *     out of the jiggle; they stay rigidly anchored to their original
+ *     positions while the underlying sphere wobbles. Amplitude is small
+ *     enough (a few % of unit radius) that the visual mismatch reads as
+ *     intentional surface squish rather than a bug.
+ *   - The `bumpMap` on the basketball / football is in fragment-space and
+ *     doesn't update when vertices move, so its grain may "swim" subtly
+ *     during the wobble. Acceptable at this amplitude / duration.
+ */
+
+export interface JiggleUniforms {
+  uJiggleCenter: { value: THREE.Vector3 };
+  uJiggleTime: { value: number };
+  uJiggleAmp: { value: number };
+}
+
+/**
+ * Peak amplitude (in object-space units) of a fresh poke. Multiplied by the
+ * spatial falloff and the temporal decay in the shader, so this is the
+ * theoretical maximum displacement at the click point at t = 0.
+ */
+const AMP_PEAK = 0.085;
+
+/**
+ * Once a mesh's `uJiggleAmp` decays under this threshold we treat it as
+ * resting and clamp it to zero so the GPU stops doing displacement work.
+ */
+const AMP_REST = 0.0008;
+
+/**
+ * Per-second decay rate of the amplitude after a poke. AMP_PEAK · e^(-DECAY · t)
+ * crosses AMP_REST around t ≈ 1.3 s, which matches the wobble-and-settle
+ * cadence of real jello.
+ */
+const DECAY_RATE = 3.5;
+
+export function createJiggleUniforms(): JiggleUniforms {
+  return {
+    uJiggleCenter: { value: new THREE.Vector3() },
+    uJiggleTime: { value: 0 },
+    uJiggleAmp: { value: 0 },
+  };
+}
+
+/**
+ * Patch a `MeshStandardMaterial` so its vertex shader reads from the shared
+ * `JiggleUniforms` and adds a damped, spatially-falling-off sine wave to
+ * each vertex's position along its normal.
+ *
+ * Uses `onBeforeCompile` so we don't have to fork `MeshStandardMaterial` —
+ * three.js still owns lighting, shadows, IBL, bump-map sampling, etc., and
+ * we just slot a single extra term into `<begin_vertex>`.
+ */
+export function attachJiggleShader(
+  material: THREE.MeshStandardMaterial,
+  uniforms: JiggleUniforms,
+): void {
+  const prev = material.onBeforeCompile;
+  material.onBeforeCompile = (shader, renderer) => {
+    if (prev) prev.call(material, shader, renderer);
+
+    shader.uniforms.uJiggleCenter = uniforms.uJiggleCenter;
+    shader.uniforms.uJiggleTime = uniforms.uJiggleTime;
+    shader.uniforms.uJiggleAmp = uniforms.uJiggleAmp;
+
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+uniform vec3 uJiggleCenter;
+uniform float uJiggleTime;
+uniform float uJiggleAmp;`,
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+if (uJiggleAmp > 0.0) {
+  float jDist = length(position - uJiggleCenter);
+  float jRadial = exp(-jDist * 1.6);
+  float jDecay = exp(-uJiggleTime * ${DECAY_RATE.toFixed(2)});
+  float jWave = sin(uJiggleTime * 16.0 - jDist * 4.0);
+  float jDisp = uJiggleAmp * jDecay * jRadial * jWave;
+  transformed += normalize(normal) * jDisp;
+}`,
+      );
+  };
+  // Force three.js to recompile this material's program so our patched
+  // chunks are picked up the first time it's drawn.
+  material.needsUpdate = true;
+}
+
+/** Trigger a fresh wobble centered at `localPoint` (object-local space). */
+export function pokeJiggle(uniforms: JiggleUniforms, localPoint: THREE.Vector3): void {
+  uniforms.uJiggleCenter.value.copy(localPoint);
+  uniforms.uJiggleTime.value = 0;
+  uniforms.uJiggleAmp.value = AMP_PEAK;
+}
+
+/**
+ * Advance the wobble by `delta` seconds. Decays amplitude at the same rate
+ * the shader's `e^(-DECAY · t)` term does, so we can early-out the GPU work
+ * once the wobble is below the rest threshold.
+ */
+export function tickJiggle(uniforms: JiggleUniforms, delta: number): void {
+  if (uniforms.uJiggleAmp.value <= 0) return;
+  uniforms.uJiggleTime.value += delta;
+  uniforms.uJiggleAmp.value *= Math.exp(-DECAY_RATE * delta);
+  if (uniforms.uJiggleAmp.value < AMP_REST) {
+    uniforms.uJiggleAmp.value = 0;
+  }
+}
