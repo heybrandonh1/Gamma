@@ -397,22 +397,27 @@ export function buildBasketball(): SportMesh {
 // ---------- football --------------------------------------------------------
 
 /**
- * Prolate-spheroid pebbled-leather football with the iconic white stripe
- * bands near each tip and a row of thick white laces along the top seam.
+ * Football — ported from the SSGI Sport Arena vibe. The previous morpher
+ * design layered white tip stripe bands + thick capsule laces + a pebbled
+ * leather bump map; that read as a college / kids-league football rather
+ * than the simple pro look used in the arena. This rewrite mirrors the
+ * arena exactly: brown prolate-spheroid leather body, a thin white lace
+ * strip running along the top, and 7 cross stitches across the strip —
+ * no tip bands, no bump map.
  *
  * Geometry pipeline:
- *   - Start from a sphere of radius 0.7.
- *   - Stretch z by 1.7× and taper xy by `1 - (|z|/0.7)^4 · 0.55` so the
- *     tips pinch to points (quartic falloff = sharper tip than a quadratic).
+ *   - Same prolate-spheroid deformation as the arena (sphere stretched on
+ *     +z by 1.7× with a quartic tip pinch), scaled up from the arena's
+ *     baseRadius = 0.32 to baseRadius = 0.7 so the football fills the
+ *     morpher card the way the other meshes do.
+ *   - Lace strip + cross stitches built as `TubeGeometry` curves (not
+ *     capsules), the same way the arena does it. Strip thickness scales
+ *     with baseRadius so it stays visually proportional.
  *
- * Surface detail:
- *   - Procedural pebble bump map (same helper as the basketball, slightly
- *     denser) gives leather grain.
- *   - Two white TubeGeometry rings at z = ±0.85 — radius computed analytically
- *     from the deformation formula so they sit flush on the surface, not
- *     floating above or biting into it.
- *   - 7 thick white capsules along z ∈ [-0.275, +0.275] above the seam,
- *     each oriented horizontally — the visible "laces" you grip.
+ * Materials:
+ *   - Leather (0x6c3a1b) and laces (0xf2efe4) match the arena's spec
+ *     verbatim, just driven through the morpher's `makeStandardMaterial`
+ *     so the jiggle uniforms still attach for the click-to-jello wobble.
  */
 export function buildFootball(): SportMesh {
   const group = new THREE.Group();
@@ -421,18 +426,11 @@ export function buildFootball(): SportMesh {
   const SPHERE_R = 0.7;
   const Z_STRETCH = 1.7;
   const TIP_FALLOFF = 0.55;
-
-  // Analytic xy radius of the deformed surface at a given world-z.
-  // Inverse of the deformation: world_z = sphere_z * Z_STRETCH, so
-  // sphere_z = world_z / Z_STRETCH. Then xy_orig = √(R² - sphere_z²) and
-  // tip_factor = 1 - (|sphere_z|/R)^4 · TIP_FALLOFF.
-  const xyRadiusAt = (worldZ: number) => {
-    const sz = worldZ / Z_STRETCH;
-    if (Math.abs(sz) >= SPHERE_R) return 0;
-    const xyOrig = Math.sqrt(SPHERE_R * SPHERE_R - sz * sz);
-    const tipF = 1 - Math.pow(Math.abs(sz) / SPHERE_R, 4) * TIP_FALLOFF;
-    return xyOrig * tipF;
-  };
+  // Scale factor relative to the arena's baseRadius so we can reuse the
+  // arena's lace-strip / stitch coordinate constants without hand-porting
+  // every magic number.
+  const ARENA_BASE_R = 0.32;
+  const SCALE = SPHERE_R / ARENA_BASE_R;
 
   const ballGeo = new THREE.SphereGeometry(SPHERE_R, 128, 128);
   const pos = ballGeo.attributes.position;
@@ -447,65 +445,73 @@ export function buildFootball(): SportMesh {
   pos.needsUpdate = true;
   ballGeo.computeVertexNormals();
 
-  const bumpMap = makePebbleBumpMap(512, 0.055);
-  const ballMat = new THREE.MeshStandardMaterial({
-    color: 0x6b2f17,
+  const ballMat = makeStandardMaterial(0x6c3a1b, {
     roughness: 0.7,
-    metalness: 0.04,
-    bumpMap,
-    bumpScale: 0.006,
-    envMapIntensity: 0.85,
-    transparent: true,
-    opacity: 0,
+    metalness: 0,
+    envMapIntensity: 1.0,
+    jiggle,
   });
-  attachJiggleShader(ballMat, jiggle);
   group.add(new THREE.Mesh(ballGeo, ballMat));
 
-  // White stripe bands near each tip — thick TubeGeometry rings whose radius
-  // matches the deformed ellipsoid's local cross-section at that z. They
-  // share the ball's jiggle so the rings wobble in sync with the leather.
-  const stripeMat = makeStandardMaterial(0xefe9da, {
-    roughness: 0.55,
-    envMapIntensity: 0.7,
+  const laceMat = makeStandardMaterial(0xf2efe4, {
+    roughness: 0.45,
+    metalness: 0,
+    envMapIntensity: 1.0,
     jiggle,
   });
-  const stripeOffset = 0.005;
-  for (const stripeZ of [0.88, -0.88]) {
-    const ringR = xyRadiusAt(stripeZ) + stripeOffset;
-    if (ringR <= 0) continue;
-    const stripePts: THREE.Vector3[] = [];
-    const SEG = 96;
-    for (let i = 0; i < SEG; i++) {
-      const t = (i / SEG) * Math.PI * 2;
-      stripePts.push(new THREE.Vector3(Math.cos(t) * ringR, Math.sin(t) * ringR, stripeZ));
-    }
-    const stripeCurve = new THREE.CatmullRomCurve3(stripePts, true);
-    const stripeGeo = new THREE.TubeGeometry(stripeCurve, 128, 0.055, 10, true);
-    group.add(new THREE.Mesh(stripeGeo, stripeMat));
+
+  // Lace strip — short tube along the football's z-axis, sitting just
+  // above the +y top surface. Arena formula: y = baseRadius·0.9 - 0.01·t²,
+  // z = t·0.28 for t ∈ [-1, 1]. Both axes scale linearly with SCALE so
+  // the strip rides the deformed ellipsoid the same way at any baseRadius.
+  const stripPts: THREE.Vector3[] = [];
+  for (let i = 0; i <= 24; i++) {
+    const t = (i / 24) * 2 - 1;
+    stripPts.push(
+      new THREE.Vector3(
+        0,
+        SPHERE_R * 0.9 - 0.01 * t * t * SCALE,
+        t * 0.28 * SCALE,
+      ),
+    );
+  }
+  const stripCurve = new THREE.CatmullRomCurve3(stripPts);
+  group.add(
+    new THREE.Mesh(
+      new THREE.TubeGeometry(stripCurve, 60, 0.008 * SCALE, 6, false),
+      laceMat,
+    ),
+  );
+
+  // 7 cross stitches across the strip. Same arena recipe — short
+  // horizontal tubes spanning ±0.04 in x, distributed along z ∈ [-0.2, 0.2].
+  for (let i = 0; i < 7; i++) {
+    const t = i / 6;
+    const z = (t * 2 - 1) * 0.2 * SCALE;
+    const stitchPts = [
+      new THREE.Vector3(
+        -0.04 * SCALE,
+        SPHERE_R * 0.91 - 0.005 * (z * z),
+        z,
+      ),
+      new THREE.Vector3(
+        0.04 * SCALE,
+        SPHERE_R * 0.91 - 0.005 * (z * z),
+        z,
+      ),
+    ];
+    const stitchCurve = new THREE.CatmullRomCurve3(stitchPts);
+    group.add(
+      new THREE.Mesh(
+        new THREE.TubeGeometry(stitchCurve, 8, 0.009 * SCALE, 5, false),
+        laceMat,
+      ),
+    );
   }
 
-  // Laces — row of thick white capsules sitting on top of the football
-  // (along +y) right above the seam. CapsuleGeometry's default axis is +Y,
-  // so we rotate around z by π/2 to lay them horizontally along the x-axis.
-  const laceMat = makeStandardMaterial(0xf5f1e6, {
-    roughness: 0.4,
-    envMapIntensity: 0.7,
-    jiggle,
-  });
-  const NUM_LACES = 7;
-  const LACE_SPAN = 0.55;
-  for (let i = 0; i < NUM_LACES; i++) {
-    const t = i / (NUM_LACES - 1);
-    const laceZ = (t - 0.5) * LACE_SPAN;
-    const yTop = xyRadiusAt(laceZ);
-    const laceGeo = new THREE.CapsuleGeometry(0.022, 0.13, 6, 12);
-    const lace = new THREE.Mesh(laceGeo, laceMat);
-    lace.position.set(0, yTop + 0.012, laceZ);
-    lace.rotation.z = Math.PI / 2;
-    group.add(lace);
-  }
-
-  // Tilt slightly so the laces are visible from the default camera angle.
+  // Tilt slightly so the laces are visible from the default camera angle
+  // (the morpher card frames the ball head-on; without this the lace
+  // strip would be fully aligned with the camera and read as a thin line).
   group.rotation.z = Math.PI / 14;
   group.rotation.x = -Math.PI / 18;
 
@@ -524,7 +530,6 @@ export function buildFootball(): SportMesh {
     },
     dispose() {
       disposeRecursive(group);
-      bumpMap.dispose();
     },
   };
 }
@@ -694,32 +699,36 @@ function buildTruncatedIcosahedronGeometry(radius: number): THREE.BufferGeometry
   return geometry;
 }
 
+/**
+ * Soccer ball — ported from the SSGI Sport Arena vibe so this card and the
+ * arena render the exact same Buckminster soccer ball. Drops the morpher's
+ * old underlay sphere (the sphere-projected panels cover the surface
+ * cleanly on their own), uses the panels at full radius (no inner
+ * shrink), and matches the arena's material tuning (metalness 0,
+ * envMapIntensity 1.0). The geometry helper itself
+ * (`buildTruncatedIcosahedronGeometry`) was already shared in spirit
+ * between the two vibes, so the only visible delta this brings is
+ * surface tightness + the cleaner one-mesh look.
+ */
 export function buildSoccerBall(): SportMesh {
   const group = new THREE.Group();
   const radius = 0.9;
   const jiggle = createJiggleUniforms();
 
-  // Base ball with the truncated-icosahedron panel coloring.
-  const panelGeo = buildTruncatedIcosahedronGeometry(radius * 0.998);
+  const panelGeo = buildTruncatedIcosahedronGeometry(radius);
   const blackPanelMat = makeStandardMaterial(0x111111, {
     roughness: 0.6,
-    envMapIntensity: 0.6,
+    metalness: 0,
+    envMapIntensity: 1.0,
     jiggle,
   });
   const whitePanelMat = makeStandardMaterial(0xf4f4f4, {
     roughness: 0.55,
-    envMapIntensity: 0.85,
+    metalness: 0,
+    envMapIntensity: 1.0,
     jiggle,
   });
-  const panels = new THREE.Mesh(panelGeo, [blackPanelMat, whitePanelMat]);
-  group.add(panels);
-
-  // Slight underlay sphere in case the truncated polyhedron leaves any visible
-  // cracks at the seams (it shouldn't with the sphere projection, but the
-  // underlay is cheap insurance).
-  const underGeo = new THREE.SphereGeometry(radius * 0.97, 64, 64);
-  const underMat = makeStandardMaterial(0x222222, { roughness: 0.7, jiggle });
-  group.add(new THREE.Mesh(underGeo, underMat));
+  group.add(new THREE.Mesh(panelGeo, [blackPanelMat, whitePanelMat]));
 
   return {
     object: group,
