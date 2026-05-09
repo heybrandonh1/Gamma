@@ -110,6 +110,7 @@ wizard-zork-pc/
 ├── terminal-buffer.ts    # CanvasTexture-backed amber terminal with blinking caret
 ├── crt-screen.ts         # bulged plane + custom CRT ShaderMaterial
 ├── pc-chassis.ts         # beige CRT monitor + tower + power LEDs
+├── peripherals.ts        # beige keyboard + mouse + cable plugged into the tower
 ├── wizard-table.ts       # wood table top + animated rune emissive ring
 ├── candles.ts            # lathe wax + flame cones + flickering point lights
 ├── crystal-orb.ts        # subdivided octahedron + transmissive PBR + violet inner light

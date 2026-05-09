@@ -15,6 +15,7 @@ import { createCrystalOrb } from "./crystal-orb";
 import { createInputController } from "./input-controller";
 import { createMagicParticles } from "./magic-particles";
 import { createPc } from "./pc-chassis";
+import { createPeripherals } from "./peripherals";
 import { createShowController } from "./show-controller";
 import { createTerminalBuffer } from "./terminal-buffer";
 import { createWizardTable } from "./wizard-table";
@@ -22,8 +23,10 @@ import { VibeFallback } from "../_shared/vibe-fallback";
 
 /**
  * Wizard's Zork PC vibe — a beige CRT on a magical wood table runs
- * Zork I in amber phosphor while runes pulse, candles flicker, and a
- * transmissive crystal orb spins on the corner.
+ * Zork I in amber phosphor while runes pulse, candles flicker, a
+ * transmissive crystal orb spins on the corner, and a beige keyboard
+ * and mouse sit in front of the monitor with the mouse cable plugged
+ * into the tower.
  *
  * The component owns its renderer, scene, post-processing composer,
  * orbit controls, all subsystem controllers, and the hidden input
@@ -140,6 +143,15 @@ export function WizardZorkPc({
     pc.object.rotation.y = Math.PI * 0.05;
     scene.add(pc.object);
 
+    // Keyboard + mouse + cable, parented to the PC group so they
+    // inherit the chassis's small yaw and the desk reads as one
+    // assembled set rather than three pieces dropped at world origin.
+    const peripherals = createPeripherals({
+      tableY: 0,
+      towerCablePort: pc.towerCablePort,
+    });
+    pc.object.add(peripherals.object);
+
     const buffer = createTerminalBuffer();
     const screen = createCrtScreen({
       texture: buffer.texture,
@@ -193,7 +205,7 @@ export function WizardZorkPc({
     const input = createInputController({ controller: show });
 
     show.setReducedMotion(reduceMotionRef.current);
-    [table, candles, orb, particles, pc, screen].forEach((sys) =>
+    [table, candles, orb, particles, pc, peripherals, screen].forEach((sys) =>
       sys.setReducedMotion(reduceMotionRef.current),
     );
 
@@ -249,7 +261,7 @@ export function WizardZorkPc({
     // so the closure isn't capturing a TDZ binding.
     setReducedRef.current = (v: boolean) => {
       show.setReducedMotion(v);
-      [table, candles, orb, particles, pc, screen].forEach((sys) =>
+      [table, candles, orb, particles, pc, peripherals, screen].forEach((sys) =>
         sys.setReducedMotion(v),
       );
       controls.autoRotate = !v;
@@ -274,6 +286,7 @@ export function WizardZorkPc({
       orb.tick(delta);
       particles.tick(delta);
       pc.tick(delta);
+      peripherals.tick(delta);
       screen.tick(delta);
       buffer.tick(delta);
 
@@ -295,6 +308,7 @@ export function WizardZorkPc({
 
       buffer.dispose();
       screen.dispose();
+      peripherals.dispose();
       pc.dispose();
       table.dispose();
       candles.dispose();

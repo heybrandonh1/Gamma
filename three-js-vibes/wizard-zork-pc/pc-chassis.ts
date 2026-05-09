@@ -21,6 +21,14 @@ export interface Pc {
   readonly screenWidth: number;
   /** Height of the inset the screen plane should match. */
   readonly screenHeight: number;
+  /**
+   * PC-local point on the lower-left side of the tower that
+   * peripherals (keyboard / mouse cables) should plug into. Exposed
+   * here so the cable routing in {@link createPeripherals} stays in
+   * sync with the tower's actual geometry — if the tower moves, the
+   * cable end follows.
+   */
+  readonly towerCablePort: THREE.Vector3;
   setReducedMotion(reduced: boolean): void;
   tick(deltaSeconds: number): void;
   dispose(): void;
@@ -201,6 +209,19 @@ export function createPc(): Pc {
 
   const screenAnchor = new THREE.Vector3(0, bodyHeight / 2, 0.4 + bezelDepth + 0.004);
 
+  // Cable port: front-left bottom corner of the tower body, where a
+  // peripheral cable would plug into a real PC. Computed in PC-local
+  // space from the tower's transform + body geometry so the
+  // peripherals subsystem can route a cable here without re-deriving
+  // the tower's layout.
+  const towerHalfWidth = 0.55 / 2;
+  const towerHalfDepth = 1.4 / 2;
+  const towerCablePort = new THREE.Vector3(
+    tower.position.x - towerHalfWidth,
+    tower.position.y + 0.15,
+    tower.position.z + towerHalfDepth,
+  );
+
   let reduced = false;
 
   return {
@@ -208,6 +229,7 @@ export function createPc(): Pc {
     screenAnchor,
     screenWidth: insetWidth,
     screenHeight: insetHeight,
+    towerCablePort,
     setReducedMotion(v: boolean) {
       reduced = v;
     },
