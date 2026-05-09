@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 import {
   buildBaseball,
@@ -27,11 +29,6 @@ export interface LogoForgeProps {
   className?: string;
 }
 
-interface ActiveFrameInfo {
-  name: string;
-  caption: string;
-}
-
 function hasWebGL(): boolean {
   if (typeof document === "undefined") return false;
   try {
@@ -54,7 +51,6 @@ export function LogoForge({
   const reduceMotionRef = useRef(reduceMotion ?? false);
   const controllerRef = useRef<ShowController | null>(null);
   const [failed, setFailed] = useState(false);
-  const [activeFrame, setActiveFrame] = useState<ActiveFrameInfo | null>(null);
 
   reduceMotionRef.current = reduceMotion ?? false;
 
@@ -75,8 +71,8 @@ export function LogoForge({
     let raf = 0;
 
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-    camera.position.set(0, 0, 4.2);
+    const camera = new THREE.PerspectiveCamera(35, 1, 0.1, 100);
+    camera.position.set(0, 0, 5.0);
     camera.lookAt(0, 0, 0);
 
     let renderer: THREE.WebGLRenderer;
@@ -96,27 +92,33 @@ export function LogoForge({
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
 
-    // Lighting: low ambient base + bright key/fill so the materials read
-    // their color without being lost in shadow, plus a colored rim point
-    // light that the show controller crossfades per sport for that
-    // "atmosphere shifts when the object changes" effect.
-    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
-    scene.add(ambient);
+    // PMREM-generated environment map from a procedural RoomEnvironment.
+    // No external HDR asset needed — three.js builds a soft studio-style
+    // cubemap on the fly. This is the single biggest contributor to
+    // "objects look like real physical things" because MeshStandardMaterial
+    // can finally pick up reflections / image-based lighting on its rough
+    // surfaces. Without it, materials read flat.
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const envTexture = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    scene.environment = envTexture;
 
-    const keyLight = new THREE.DirectionalLight(0xfff2dd, 1.3);
+    // Lighting on top of the IBL: a soft ambient floor + a warm directional
+    // key for shape definition + a colored rim point light that the show
+    // controller crossfades per sport.
+    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+    scene.add(ambient);
+    const keyLight = new THREE.DirectionalLight(0xfff2dd, 1.1);
     keyLight.position.set(2.5, 3, 4);
     scene.add(keyLight);
-
-    const fillLight = new THREE.DirectionalLight(0xb6c8ff, 0.55);
+    const fillLight = new THREE.DirectionalLight(0xb6c8ff, 0.5);
     fillLight.position.set(-3, -1, 2);
     scene.add(fillLight);
-
-    const rimLight = new THREE.PointLight(0xffd58a, 6, 10, 1.6);
+    const rimLight = new THREE.PointLight(0xffd58a, 5, 10, 1.6);
     rimLight.position.set(-2, -0.5, -2.5);
     scene.add(rimLight);
 
-    // Build the six meshes and add them to the scene up front (controller
-    // toggles visibility via opacity + scale + visible).
+    // Build the six sport meshes. They're added to the scene up front; the
+    // show controller toggles `visible` + scale + opacity per cycle.
     const meshes: SportMesh[] = [
       buildBaseball(),
       buildBat(),
@@ -125,53 +127,19 @@ export function LogoForge({
       buildSoccerBall(),
       buildHockeyPuck(),
     ];
-    meshes.forEach((m) => scene.add(m.mesh));
+    meshes.forEach((m) => scene.add(m.object));
 
     const frames: ShowFrame[] = [
-      {
-        sportMesh: meshes[0],
-        name: "Baseball",
-        caption: "Cowhide & red stitches",
-        rimColor: "#ffd58a",
-      },
-      {
-        sportMesh: meshes[1],
-        name: "Bat",
-        caption: "Northern white ash, lathe-turned",
-        rimColor: "#e6c089",
-      },
-      {
-        sportMesh: meshes[2],
-        name: "Basketball",
-        caption: "Pebbled grain, eight-panel seam",
-        rimColor: "#ff8a3a",
-      },
-      {
-        sportMesh: meshes[3],
-        name: "Football",
-        caption: "Pigskin laces, autumn light",
-        rimColor: "#d4a36d",
-      },
-      {
-        sportMesh: meshes[4],
-        name: "Soccer Ball",
-        caption: "Twelve pentagons, twenty hexagons",
-        rimColor: "#cfdcff",
-      },
-      {
-        sportMesh: meshes[5],
-        name: "Hockey Puck",
-        caption: "Vulcanized rubber, frozen smooth",
-        rimColor: "#9fb4cc",
-      },
+      { sportMesh: meshes[0], name: "Baseball", caption: "", rimColor: "#ffd58a" },
+      { sportMesh: meshes[1], name: "Bat", caption: "", rimColor: "#e6c089" },
+      { sportMesh: meshes[2], name: "Basketball", caption: "", rimColor: "#ff8a3a" },
+      { sportMesh: meshes[3], name: "Football", caption: "", rimColor: "#d4a36d" },
+      { sportMesh: meshes[4], name: "Soccer Ball", caption: "", rimColor: "#cfdcff" },
+      { sportMesh: meshes[5], name: "Hockey Puck", caption: "", rimColor: "#9fb4cc" },
     ];
 
     const controller = createShowController({ frames, rimLight });
     controllerRef.current = controller;
-    const unsub = controller.onFrameSettled((_i, frame) => {
-      if (!alive) return;
-      setActiveFrame({ name: frame.name, caption: frame.caption });
-    });
     controller.setReducedMotion(reduceMotionRef.current);
     controller.start();
 
@@ -188,30 +156,30 @@ export function LogoForge({
     const ro = new ResizeObserver(resize);
     ro.observe(mount);
 
+    // Free 360° rotation: OrbitControls owns pointer input. Zoom + pan are
+    // disabled (we want pure inspection-grade rotation, not a flythrough).
+    // Polar limits are wide open so the user can flip the camera under and
+    // over the object — true 360° in every direction.
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enableZoom = false;
+    controls.enablePan = false;
+    controls.rotateSpeed = 0.8;
+    controls.minPolarAngle = 0;
+    controls.maxPolarAngle = Math.PI;
+    controls.target.set(0, 0, 0);
     renderer.domElement.style.touchAction = "none";
-    renderer.domElement.style.cursor = "pointer";
+    renderer.domElement.style.cursor = "grab";
 
-    const onClick = () => {
-      if (reduceMotionRef.current) return;
-      controller.next();
+    const onDown = () => {
+      renderer.domElement.style.cursor = "grabbing";
     };
-    renderer.domElement.addEventListener("click", onClick);
-
-    // Mouse parallax (damped) layered over a slow lissajous idle drift so
-    // the camera always has gentle motion even before any input.
-    let mx = 0;
-    let my = 0;
-    const onPointer = (e: PointerEvent) => {
-      const rect = renderer.domElement.getBoundingClientRect();
-      mx = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      my = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+    const onUp = () => {
+      renderer.domElement.style.cursor = "grab";
     };
-    const onPointerLeave = () => {
-      mx = 0;
-      my = 0;
-    };
-    renderer.domElement.addEventListener("pointermove", onPointer);
-    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+    renderer.domElement.addEventListener("pointerdown", onDown);
+    window.addEventListener("pointerup", onUp);
 
     const clock = new THREE.Clock();
 
@@ -219,17 +187,9 @@ export function LogoForge({
       if (!alive) return;
       raf = requestAnimationFrame(tick);
       const delta = clock.getDelta();
-      const elapsed = clock.getElapsedTime();
 
       if (!reduceMotionRef.current) controller.update(delta);
-
-      const driftX = Math.sin(elapsed * 0.32) * 0.18;
-      const driftY = Math.cos(elapsed * 0.27) * 0.13;
-      const aimX = mx * 0.45 + driftX;
-      const aimY = my * 0.32 + driftY;
-      camera.position.x += (aimX - camera.position.x) * 0.04;
-      camera.position.y += (aimY - camera.position.y) * 0.04;
-      camera.lookAt(0, 0, 0);
+      controls.update();
 
       renderer.render(scene, camera);
     };
@@ -239,16 +199,18 @@ export function LogoForge({
       alive = false;
       cancelAnimationFrame(raf);
       ro.disconnect();
-      renderer.domElement.removeEventListener("click", onClick);
-      renderer.domElement.removeEventListener("pointermove", onPointer);
-      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
-      unsub();
+      controls.dispose();
+      renderer.domElement.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("pointerup", onUp);
       controller.dispose();
       controllerRef.current = null;
       meshes.forEach((m) => {
-        scene.remove(m.mesh);
+        scene.remove(m.object);
         m.dispose();
       });
+      scene.environment = null;
+      envTexture.dispose();
+      pmrem.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === mount) {
         mount.removeChild(renderer.domElement);
@@ -273,25 +235,7 @@ export function LogoForge({
           "radial-gradient(ellipse at center, #1a1d35 0%, #0a0c1a 70%, #05060f 100%)",
       }}
       role="img"
-      aria-label={
-        activeFrame
-          ? `3D model of a ${activeFrame.name.toLowerCase()}`
-          : "3D sport object showcase"
-      }
-    >
-      {activeFrame && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex flex-col items-center gap-1 px-6 pb-6 text-center">
-          <span className="text-[10px] uppercase tracking-[0.2em] text-white/40">
-            Sport
-          </span>
-          <span className="text-base font-medium text-white/90">
-            {activeFrame.name}
-          </span>
-          <span className="text-xs leading-tight text-white/55">
-            {activeFrame.caption}
-          </span>
-        </div>
-      )}
-    </div>
+      aria-label="3D sporting equipment carousel — drag to rotate"
+    />
   );
 }

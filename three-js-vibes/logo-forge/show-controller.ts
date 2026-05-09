@@ -9,8 +9,11 @@ import type { SportMesh } from "./mesh-builders";
  * mesh tweens from scale 0.4 → 1 with a back-out overshoot, plus the rim
  * point-light color crossfades from one sport's tint to the next.
  *
- * Every tween here is GSAP-driven so they're cheap, retargetable, and play
- * well with `setReducedMotion` killing them.
+ * Opacity is driven through `SportMesh.setOpacity(value)` rather than tweening
+ * a single material — sport meshes are now `Group`s with multiple sub-meshes
+ * (baseball + stitch tubes, soccer ball with multi-material panels, etc.), so
+ * the controller pokes a state object and the mesh's helper applies it to
+ * every material in its tree.
  */
 
 export interface ShowFrame {
@@ -22,11 +25,8 @@ export interface ShowFrame {
 }
 
 export interface ShowController {
-  /** Kick off the cycle. Call once after the first frame is set up. */
   start(): void;
-  /** Skip ahead. */
   next(): void;
-  /** Per-frame tick: spin the active mesh. */
   update(deltaSeconds: number): void;
   setReducedMotion(reduced: boolean): void;
   onFrameSettled(cb: (index: number, frame: ShowFrame) => void): () => void;
@@ -38,7 +38,7 @@ export interface ShowControllerOptions {
   rimLight: THREE.PointLight;
   /** Seconds the active mesh holds before crossfading to the next. */
   holdSeconds?: number;
-  /** Total crossfade duration (out + in overlap inside this window). */
+  /** Total crossfade duration. */
   fadeSeconds?: number;
 }
 
@@ -48,7 +48,7 @@ const TMP_TO = new THREE.Color();
 export function createShowController(
   opts: ShowControllerOptions,
 ): ShowController {
-  const { frames, rimLight, holdSeconds = 3.4, fadeSeconds = 1.0 } = opts;
+  const { frames, rimLight, holdSeconds = 3.6, fadeSeconds = 1.0 } = opts;
 
   if (frames.length === 0) {
     throw new Error("logo-forge: at least one frame is required");
@@ -63,15 +63,14 @@ export function createShowController(
 
   // Initial pose: frame 0 visible at full scale, others tucked away.
   frames.forEach((f, i) => {
-    const mat = f.sportMesh.mesh.material as THREE.MeshStandardMaterial;
     if (i === 0) {
-      mat.opacity = 1;
-      f.sportMesh.mesh.scale.setScalar(1);
-      f.sportMesh.mesh.visible = true;
+      f.sportMesh.setOpacity(1);
+      f.sportMesh.object.scale.setScalar(1);
+      f.sportMesh.object.visible = true;
     } else {
-      mat.opacity = 0;
-      f.sportMesh.mesh.scale.setScalar(0.4);
-      f.sportMesh.mesh.visible = false;
+      f.sportMesh.setOpacity(0);
+      f.sportMesh.object.scale.setScalar(0.4);
+      f.sportMesh.object.visible = false;
     }
   });
   rimLight.color.set(frames[0].rimColor);
@@ -90,41 +89,46 @@ export function createShowController(
     const prev = frames[currentIndex];
     const next = frames[nextIndex];
 
-    next.sportMesh.mesh.visible = true;
-    const prevMat = prev.sportMesh.mesh.material as THREE.MeshStandardMaterial;
-    const nextMat = next.sportMesh.mesh.material as THREE.MeshStandardMaterial;
+    next.sportMesh.object.visible = true;
 
+    // Fade out previous: opacity → 0, scale → 0.4
+    const prevOpacity = { v: 1 };
     track(
-      gsap.to(prevMat, {
-        opacity: 0,
+      gsap.to(prevOpacity, {
+        v: 0,
         duration: fadeSeconds * 0.7,
         ease: "power2.in",
+        onUpdate: () => prev.sportMesh.setOpacity(prevOpacity.v),
       }),
     );
     track(
-      gsap.to(prev.sportMesh.mesh.scale, {
+      gsap.to(prev.sportMesh.object.scale, {
         x: 0.4,
         y: 0.4,
         z: 0.4,
         duration: fadeSeconds * 0.7,
         ease: "power2.in",
         onComplete: () => {
-          prev.sportMesh.mesh.visible = false;
+          prev.sportMesh.object.visible = false;
         },
       }),
     );
 
+    // Fade in next: opacity 0 → 1, scale 0.4 → 1 with overshoot
+    next.sportMesh.setOpacity(0);
+    const nextOpacity = { v: 0 };
     track(
-      gsap.to(nextMat, {
-        opacity: 1,
+      gsap.to(nextOpacity, {
+        v: 1,
         duration: fadeSeconds,
         delay: fadeSeconds * 0.4,
         ease: "power2.out",
+        onUpdate: () => next.sportMesh.setOpacity(nextOpacity.v),
       }),
     );
     track(
       gsap.fromTo(
-        next.sportMesh.mesh.scale,
+        next.sportMesh.object.scale,
         { x: 0.4, y: 0.4, z: 0.4 },
         {
           x: 1,
@@ -142,9 +146,7 @@ export function createShowController(
       ),
     );
 
-    // Crossfade the rim light color in step with the mesh swap. We tween a
-    // throwaway color object's channels and copy them onto the light each
-    // frame to avoid GSAP touching read-only THREE.Color setters directly.
+    // Crossfade the rim light tint in lockstep.
     TMP_FROM.set(prev.rimColor);
     TMP_TO.set(next.rimColor);
     const colorState = { r: TMP_FROM.r, g: TMP_FROM.g, b: TMP_FROM.b };
@@ -182,13 +184,13 @@ export function createShowController(
       fadeTo(ni);
     },
     update(deltaSeconds: number) {
-      // Spin every mesh that's currently visible (during the crossfade window
-      // both prev and next can be visible at once, so we spin all visible
-      // ones instead of just the "current").
+      // Spin every visible mesh on its own axis. During the crossfade window
+      // both prev and next can be visible; spinning both keeps the motion
+      // continuous through the transition.
       for (const f of frames) {
-        if (!f.sportMesh.mesh.visible) continue;
+        if (!f.sportMesh.object.visible) continue;
         const ax = f.sportMesh.spinAxis;
-        f.sportMesh.mesh.rotation[ax] += f.sportMesh.spinSpeed * deltaSeconds;
+        f.sportMesh.object.rotation[ax] += f.sportMesh.spinSpeed * deltaSeconds;
       }
     },
     setReducedMotion(v: boolean) {
