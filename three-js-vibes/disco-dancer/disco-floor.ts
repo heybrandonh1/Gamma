@@ -17,25 +17,20 @@ const TILES_PER_SIDE = 16;
 const TILE_SIZE = 80;
 
 /**
- * Classic disco-club palette — saturated 70s/80s dancefloor hues you'd
- * expect under a mirror ball at Studio 54: party red, tangerine, sunshine
- * yellow, electric lime, sky-blue, and hot bubblegum pink. Cycles through
- * these out of phase per tile so the floor reads as the real thing rather
- * than a single hue washing over the whole grid.
+ * Six saturated party hues. Match the club-light and confetti palettes so
+ * the whole scene reads as one coherent set of colors rather than three
+ * unrelated rainbows.
  */
 const PALETTE: number[] = [
-  0xff2c5f, // party red
-  0xff8c1a, // tangerine
-  0xffd400, // sunshine yellow
-  0x39ff14, // electric lime
-  0x00bfff, // sky electric blue
-  0xff48c4, // hot bubblegum pink
+  0xff3366, // hot pink
+  0xff9933, // tangerine
+  0xffd633, // sunshine yellow
+  0x33ff99, // electric mint
+  0x33ccff, // cyan
+  0x9933ff, // purple
 ];
 
-// Disco floors aren't blacklight — they're lit panels reading "warm and
-// alive". Dial the cap back from the UV setting so colors saturate
-// without going neon-overbright.
-const MAX_EMISSIVE = 0.7;
+const MAX_EMISSIVE = 0.5;
 
 /** Roughly this fraction of tiles are colored/animated; rest stay dark. */
 const LIT_FRACTION = 0.55;
@@ -99,9 +94,9 @@ export function buildDiscoFloor(): {
           roughness: 0.5,
         });
       } else {
-        // Dark tile — neutral charcoal panel, no emissive. Reads as the
-        // negative space between lit panels and lets the colors pop.
-        // Still receives shadows from the dancers/ball.
+        // Dark tile — slightly darker base, no emissive. Reads as the
+        // negative space between the colored tiles and lets the lit ones
+        // pop. Still receives shadows from the dancer/ball.
         mat = new THREE.MeshStandardMaterial({
           color: 0x101013,
           emissive: 0x000000,
