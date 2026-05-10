@@ -332,9 +332,7 @@ export function SportBallMorpher({
       }
       style={{
         aspectRatio,
-        backgroundColor: "#0a0c1a",
-        backgroundImage:
-          "radial-gradient(ellipse at center, #1a1d35 0%, #0a0c1a 70%, #05060f 100%)",
+        backgroundColor: "#ffffff",
       }}
       role="img"
       aria-label="3D sporting equipment morpher — drag to rotate, hover to ripple, click to splash the surface"
