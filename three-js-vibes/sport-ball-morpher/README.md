@@ -20,7 +20,7 @@ the active object from any angle. Two ways to play with the surface:
   impulse wave that decays out over ~1.5 seconds.
 
 Lives inside the [Gamma](https://github.com/heybrandonh1/Gamma) submodule
-and mounts in Project Alpha's `/playground` page via
+and mounts in Alpha's `/playground` page via
 `lib/playground-vibes.tsx`.
 
 ## How the morph works

@@ -7,7 +7,7 @@ soccer ball, football, hockey puck) and a **procedural mannequin** standing
 in the center of the room that gets bowled around as the balls slam into it.
 
 Lives inside the [Gamma](https://github.com/heybrandonh1/Gamma) submodule and
-mounts in Project Alpha's `/playground` page via `lib/playground-vibes.tsx`.
+mounts in Alpha's `/playground` page via `lib/playground-vibes.tsx`.
 
 ## Anatomy
 

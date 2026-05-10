@@ -61,7 +61,7 @@ If the browser doesn't support WebGL or `THREE.WebGLRenderer` throws on init,
 the component renders the shared [`VibeFallback`](../_shared/vibe-fallback.tsx)
 square in place of the canvas. The host app should additionally wrap the
 component in an error boundary + `<noscript>` so chunk-load failures and
-JS-disabled browsers see the same friendly square — see Project Alpha's
+JS-disabled browsers see the same friendly square — see Alpha's
 `<VibeErrorBoundary>` for an example.
 
 ## Accessibility

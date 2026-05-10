@@ -188,8 +188,13 @@ export function SportArena({
 
         await renderer.init();
         if (!alive) {
-          renderer.dispose();
-          renderer = null;
+          // The component unmounted while `renderer.init()` was in flight.
+          // `cleanup()` has already run (it's what flipped `alive`), and it
+          // already disposed the renderer and nulled the reference — so we
+          // must not touch `renderer` here. Reading `renderer.dispose()`
+          // unconditionally is what produced the
+          // "Cannot read properties of null (reading 'dispose')" crash on
+          // every Strict-Mode double-mount.
           return;
         }
 
