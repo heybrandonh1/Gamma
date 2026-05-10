@@ -12,6 +12,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { createCandles } from "./candles";
 import { createCrtScreen } from "./crt-screen";
 import { createCrystalOrb } from "./crystal-orb";
+import { createGhostYear } from "./ghost-year";
 import { createInputController } from "./input-controller";
 import { createMagicParticles } from "./magic-particles";
 import { createPc } from "./pc-chassis";
@@ -183,6 +184,19 @@ export function WizardZorkPc({
     });
     scene.add(particles.object);
 
+    // "1978" backdrop — massive ghostly digits that materialise one at
+    // a time behind the table, hold while the year is fully spelled,
+    // then dissolve away one at a time. Sits inside the scene's fog
+    // band so it reads as a memory rather than a sign.
+    const ghostYear = createGhostYear({
+      year: "1978",
+      center: new THREE.Vector3(0, 2.6, -7.5),
+      digitHeight: 4.6,
+      digitSpacing: 0.78,
+      cycleSeconds: 14,
+    });
+    scene.add(ghostYear.object);
+
     // ----- post-processing ----------------------------------------------
     // Bloom is what sells the magical CRT — without it the screen looks
     // like a flat decal. With it, the bright phosphor / candles / orb
@@ -205,8 +219,8 @@ export function WizardZorkPc({
     const input = createInputController({ controller: show });
 
     show.setReducedMotion(reduceMotionRef.current);
-    [table, candles, orb, particles, pc, peripherals, screen].forEach((sys) =>
-      sys.setReducedMotion(reduceMotionRef.current),
+    [table, candles, orb, particles, pc, peripherals, screen, ghostYear].forEach(
+      (sys) => sys.setReducedMotion(reduceMotionRef.current),
     );
 
     // ----- mount + resize -----------------------------------------------
@@ -261,8 +275,8 @@ export function WizardZorkPc({
     // so the closure isn't capturing a TDZ binding.
     setReducedRef.current = (v: boolean) => {
       show.setReducedMotion(v);
-      [table, candles, orb, particles, pc, peripherals, screen].forEach((sys) =>
-        sys.setReducedMotion(v),
+      [table, candles, orb, particles, pc, peripherals, screen, ghostYear].forEach(
+        (sys) => sys.setReducedMotion(v),
       );
       controls.autoRotate = !v;
     };
@@ -289,6 +303,7 @@ export function WizardZorkPc({
       peripherals.tick(delta);
       screen.tick(delta);
       buffer.tick(delta);
+      ghostYear.tick(delta);
 
       // Auto-orbit is OrbitControls' own `autoRotate` (toggled by the
       // reduce-motion handler above) — no manual camera nudges needed.
@@ -314,6 +329,7 @@ export function WizardZorkPc({
       candles.dispose();
       orb.dispose();
       particles.dispose();
+      ghostYear.dispose();
 
       composer.dispose();
       bloom.dispose();
