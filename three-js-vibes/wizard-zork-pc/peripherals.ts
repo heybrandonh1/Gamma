@@ -28,24 +28,26 @@ import * as THREE from "three";
  *     the tower. Rebuilt each frame so it follows the mouse end as
  *     it floats.
  *
- * Ghostly float:
- *   The keyboard and mouse never actually sit on the table — they
- *   hover ~4 cm above it and drift continuously in 3D space, the way
- *   a possessed object on a wizard's desk should. Each axis (x, y, z
- *   position; pitch, yaw, roll rotation) is driven by a sum of three
- *   sine waves at irrationally-related frequencies (0.61 / 0.97 /
- *   1.43 Hz, weighted 0.55 / 0.30 / 0.15). Different per-axis seeds
- *   on the keyboard vs mouse mean the two items never bob in
- *   lockstep, and the lack of a fundamental period keeps the motion
- *   from visibly looping back on itself.
+ * Possession ritual:
+ *   On a long ~18 s loop the keyboard and mouse start firm on the
+ *   table, then a slow smoothstep rise lifts them all the way up to
+ *   roughly the middle of the CRT screen (~55 cm in scene units —
+ *   the monitor body is 1.2 units tall). They hover up there for a
+ *   few seconds, then descend smoothly back down to a firm rest on
+ *   the table before the loop repeats. The mouse runs the same
+ *   cycle ~1.5 s behind the keyboard so the desk doesn't lift in
+ *   lockstep.
  *
- *   Y motion dominates ("up / down" is the main read), with smaller
- *   X / Z drift on top so the silhouette also wanders left / right /
- *   forward / back. Rotation wobble is bounded at ~2-3° so the items
- *   tilt gently without ever flipping. Under `prefers-reduced-motion`
- *   both items pin to a still hover at the centre of the float
- *   envelope — no oscillation, but still off the table, in keeping
- *   with the ghostly read.
+ *   Layered on top of that primary rise/fall is an organic ghostly
+ *   drift on x / y / z position and pitch / yaw / roll rotation,
+ *   driven by sums of three sine waves at irrationally-related
+ *   frequencies (0.61 / 0.97 / 1.43 Hz). The drift is gated by an
+ *   `air` factor (= base lift / peak) so it fades in as the items
+ *   rise, runs at full strength while they hover, and fades out as
+ *   they descend — both items lock cleanly back to their resting
+ *   pose before touching down on the wood. Under
+ *   `prefers-reduced-motion` both items pin firm on the table with
+ *   no drift at all.
  */
 
 export interface Peripherals {
@@ -57,11 +59,10 @@ export interface Peripherals {
 
 export interface CreatePeripheralsArgs {
   /**
-   * PC-local Y of the table surface. The tower's bottom face sits at
-   * PC-local y=0, so passing 0 aligns the float envelope with the
-   * tower's footprint. The keyboard and mouse hover roughly 4 cm
-   * above this value (see `HOVER_Y` in the impl) and never actually
-   * touch down.
+   * PC-local Y of the table surface — the height the keyboard and
+   * mouse rest at when the possession loop is at one of its rest
+   * phases. The tower's bottom face sits at PC-local y=0, so passing
+   * 0 keeps the items flush with the tower when they touch down.
    */
   tableY: number;
   /**
@@ -133,16 +134,13 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
   const trayD = gridD + TRAY_PADDING * 2;
   const trayBaseH = 0.05;
 
-  // Average hover height above the table. Both items orbit this
-  // value continuously in `tick` — they never actually touch down,
-  // which is what gives the desk its possessed / ghostly feel.
-  const HOVER_Y = 0.04;
-
   const keyboard = new THREE.Group();
   keyboard.name = "keyboard";
   // Slightly to the left so the mouse fits comfortably between the
   // keyboard's right edge and the tower without crowding either.
-  keyboard.position.set(-0.1, tableY + HOVER_Y, 1.25);
+  // Starts firm on the table — the possession-ritual animation in
+  // `tick` is what lifts it up toward the screen mid-cycle.
+  keyboard.position.set(-0.1, tableY, 1.25);
   // ~5° back tilt — every wedge keyboard sits this way; lifts the
   // front of the tray by sin(0.085) * trayD/2 ≈ 2 cm, which the
   // viewer reads as a real keyboard angle rather than a flat plate.
@@ -237,9 +235,10 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
   // ----- mouse --------------------------------------------------------
   const mouse = new THREE.Group();
   mouse.name = "mouse";
-  // Right of the keyboard, comfortable hand distance — same hover
-  // height as the keyboard so the desk reads as one floating set.
-  mouse.position.set(0.85, tableY + HOVER_Y, 1.25);
+  // Right of the keyboard, comfortable hand distance. Like the
+  // keyboard, starts firm on the table — the lift is animated in
+  // `tick`.
+  mouse.position.set(0.85, tableY, 1.25);
   // Slight inward yaw so the mouse points toward the user, not square
   // to the table grid — sells the "set down mid-game" pose, even
   // though it's actually never set down.
@@ -304,17 +303,23 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
   const _scratchBack = new THREE.Vector3();
 
   // Recomputes the cable's four control points based on the mouse's
-  // current pose. Two intermediate points sit a few cm above the
-  // start/end so the cable reads as a stiff PS/2-era cable rather
-  // than a slack line — and so the arc lifts naturally with the
-  // mouse when the witch picks it up.
+  // current pose. The two intermediate points are lerped along the
+  // straight start->end line and then nudged up a few cm so the
+  // cable reads as a stiff PS/2-era cable rather than a slack line.
+  //
+  // The arc is added on top of the *interpolated* y rather than on
+  // top of `max(start.y, end.y)` so the cable still slopes smoothly
+  // when the mouse climbs ~55 cm above the tower mid-loop —
+  // otherwise the midpoints would clamp to the floating mouse's
+  // height and the cable would loop weirdly above it before dropping
+  // back down to the tower.
   function updateCablePoints(): void {
     _scratchBack.copy(CABLE_BACK_OFFSET).applyEuler(mouse.rotation);
     cableStart.copy(mouse.position).add(_scratchBack);
     cableMidA.lerpVectors(cableStart, cableEnd, 0.35);
-    cableMidA.y = Math.max(cableStart.y, cableEnd.y) + 0.06;
+    cableMidA.y += 0.10;
     cableMidB.lerpVectors(cableStart, cableEnd, 0.7);
-    cableMidB.y = Math.max(cableStart.y, cableEnd.y) + 0.04;
+    cableMidB.y += 0.06;
   }
 
   updateCablePoints();
@@ -346,25 +351,52 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
   plug.quaternion.copy(q);
   group.add(plug);
 
-  // ----- ghostly float animation -------------------------------------
-  // Per-axis amplitudes for the keyboard and mouse. Y leads ("up /
-  // down" is the dominant read), X is clearly visible ("left / right"
-  // drift), Z is subtler ("forward / back"). Rotation amplitudes are
-  // all bounded under ~3.5° so the items tilt gently without ever
-  // looking like they're flipping.
-  const KB_AMP_X = 0.018;
-  const KB_AMP_Y = 0.030;
-  const KB_AMP_Z = 0.010;
-  const KB_AMP_ROT_X = 0.025;
-  const KB_AMP_ROT_Y = 0.022;
-  const KB_AMP_ROT_Z = 0.030;
+  // ----- possession-ritual animation ---------------------------------
+  // Primary lift profile: items rise from a firm rest on the table
+  // up to roughly mid-screen height (the monitor body is 1.2 units
+  // tall and its lower edge sits at PC-local y=0; 0.55 puts the
+  // peak right around the screen's vertical centre), hover, then
+  // descend back to a firm rest. One full loop takes ~18 s — long
+  // enough to read as ritual rather than animation.
+  const FLOAT_PEAK = 0.55;
+  const FLOAT_PERIOD = 18.0;
+  const MOUSE_PHASE_LAG = 1.5 / FLOAT_PERIOD;
 
-  const MS_AMP_X = 0.014;
-  const MS_AMP_Y = 0.028;
-  const MS_AMP_Z = 0.012;
-  const MS_AMP_ROT_X = 0.022;
-  const MS_AMP_ROT_Y = 0.045;
-  const MS_AMP_ROT_Z = 0.038;
+  // Organic-drift amplitudes on top of the primary lift while the
+  // items are airborne (gated by the `air` factor in `tick`). Y is
+  // a Y-bob added on top of the lift, *not* the lift itself.
+  const KB_DRIFT_X = 0.04;
+  const KB_DRIFT_Y = 0.025;
+  const KB_DRIFT_Z = 0.025;
+  const KB_DRIFT_ROT_X = 0.08;
+  const KB_DRIFT_ROT_Y = 0.07;
+  const KB_DRIFT_ROT_Z = 0.06;
+
+  const MS_DRIFT_X = 0.035;
+  const MS_DRIFT_Y = 0.030;
+  const MS_DRIFT_Z = 0.025;
+  const MS_DRIFT_ROT_X = 0.07;
+  const MS_DRIFT_ROT_Y = 0.10;
+  const MS_DRIFT_ROT_Z = 0.08;
+
+  function smoothstep01(x: number): number {
+    if (x <= 0) return 0;
+    if (x >= 1) return 1;
+    return x * x * (3 - 2 * x);
+  }
+
+  // Phase profile (one full loop, [0..1]):
+  //   0.00..0.10  — at firm rest on the table (lift = 0)
+  //   0.10..0.40  — rise (smoothstep) toward FLOAT_PEAK
+  //   0.40..0.60  — hover at peak (lift = FLOAT_PEAK)
+  //   0.60..0.90  — descend (smoothstep) back to the table
+  //   0.90..1.00  — at firm rest on the table
+  function phaseLift(phase: number): number {
+    if (phase < 0.1 || phase > 0.9) return 0;
+    if (phase < 0.4) return smoothstep01((phase - 0.1) / 0.3) * FLOAT_PEAK;
+    if (phase < 0.6) return FLOAT_PEAK;
+    return smoothstep01((0.9 - phase) / 0.3) * FLOAT_PEAK;
+  }
 
   /**
    * Sum of three sine waves at irrationally-related frequencies with
@@ -376,7 +408,7 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
    * Frequencies (~0.61 / 0.97 / 1.43 Hz) are slow enough that the
    * motion reads as ghostly hover rather than vibration, and their
    * irrational ratios keep the wave from looping back on itself for
-   * many minutes — so a viewer never sees the same pose twice.
+   * many minutes — so a viewer never sees the same drift twice.
    */
   function organicNoise(t: number, seed: number): number {
     return (
@@ -388,10 +420,9 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
 
   let reduced = false;
 
-  // Pin both items to the centre of the float envelope (still off
-  // the table — the ghostly read survives even without animation)
-  // and rebuild the cable once so its arc matches.
-  function settleToCentre(): void {
+  // Pin both items firm on the table with no drift, and rebuild the
+  // cable once so its arc matches the resting pose.
+  function settleToRest(): void {
     keyboard.position.set(keyboardRestX, keyboardRestY, keyboardRestZ);
     keyboard.rotation.x = keyboardRestRotX;
     keyboard.rotation.y = 0;
@@ -411,7 +442,7 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
       reduced = v;
       if (reduced) {
         ledMat.emissiveIntensity = 1.2;
-        settleToCentre();
+        settleToRest();
       }
     },
     tick(_delta: number) {
@@ -426,26 +457,47 @@ export function createPeripherals(args: CreatePeripheralsArgs): Peripherals {
       // one strobing unit.
       ledMat.emissiveIntensity = 1.0 + 0.2 * Math.sin(t * 1.2 + 0.6);
 
-      // Keyboard ghostly drift. Per-axis seeds are spaced widely so
-      // x / y / z / pitch / yaw / roll all evolve on their own
-      // schedule — no two axes peak together.
-      keyboard.position.x = keyboardRestX + KB_AMP_X * organicNoise(t, 2.3);
-      keyboard.position.y = keyboardRestY + KB_AMP_Y * organicNoise(t, 1.1);
-      keyboard.position.z = keyboardRestZ + KB_AMP_Z * organicNoise(t, 3.7);
-      keyboard.rotation.x =
-        keyboardRestRotX + KB_AMP_ROT_X * organicNoise(t, 4.5);
-      keyboard.rotation.y = KB_AMP_ROT_Y * organicNoise(t, 5.9);
-      keyboard.rotation.z = KB_AMP_ROT_Z * organicNoise(t, 7.1);
+      // Primary lift: keyboard leads, mouse lags ~1.5 s behind.
+      const kbPhase = (((t / FLOAT_PERIOD) % 1) + 1) % 1;
+      const msPhase =
+        (((t / FLOAT_PERIOD - MOUSE_PHASE_LAG) % 1) + 1) % 1;
+      const kbLift = phaseLift(kbPhase);
+      const msLift = phaseLift(msPhase);
+      // `air` ∈ [0, 1] = how far up the lift envelope each item is.
+      // Used to gate the organic drift so the items lock cleanly
+      // back to their resting pose at the table before touching
+      // down — no drift while resting, full drift at peak hover.
+      const kbAir = kbLift / FLOAT_PEAK;
+      const msAir = msLift / FLOAT_PEAK;
 
-      // Mouse ghostly drift. Seeds shifted into a separate band
+      // Keyboard: primary lift on Y, organic drift on every axis
+      // (gated by air). Per-axis seeds are spaced widely so x / y /
+      // z / pitch / yaw / roll all evolve on their own schedule —
+      // no two axes peak together.
+      keyboard.position.x =
+        keyboardRestX + kbAir * KB_DRIFT_X * organicNoise(t, 2.3);
+      keyboard.position.y =
+        keyboardRestY + kbLift + kbAir * KB_DRIFT_Y * organicNoise(t, 1.1);
+      keyboard.position.z =
+        keyboardRestZ + kbAir * KB_DRIFT_Z * organicNoise(t, 3.7);
+      keyboard.rotation.x =
+        keyboardRestRotX + kbAir * KB_DRIFT_ROT_X * organicNoise(t, 4.5);
+      keyboard.rotation.y = kbAir * KB_DRIFT_ROT_Y * organicNoise(t, 5.9);
+      keyboard.rotation.z = kbAir * KB_DRIFT_ROT_Z * organicNoise(t, 7.1);
+
+      // Mouse: same pattern, seeds shifted into a separate band
       // (11+) so the mouse and keyboard never share a wave and
       // the desk reads as two independently possessed objects.
-      mouse.position.x = mouseRestX + MS_AMP_X * organicNoise(t, 11.1);
-      mouse.position.y = mouseRestY + MS_AMP_Y * organicNoise(t, 12.3);
-      mouse.position.z = mouseRestZ + MS_AMP_Z * organicNoise(t, 13.7);
-      mouse.rotation.x = MS_AMP_ROT_X * organicNoise(t, 14.5);
-      mouse.rotation.y = mouseRestRotY + MS_AMP_ROT_Y * organicNoise(t, 15.9);
-      mouse.rotation.z = MS_AMP_ROT_Z * organicNoise(t, 17.1);
+      mouse.position.x =
+        mouseRestX + msAir * MS_DRIFT_X * organicNoise(t, 11.1);
+      mouse.position.y =
+        mouseRestY + msLift + msAir * MS_DRIFT_Y * organicNoise(t, 12.3);
+      mouse.position.z =
+        mouseRestZ + msAir * MS_DRIFT_Z * organicNoise(t, 13.7);
+      mouse.rotation.x = msAir * MS_DRIFT_ROT_X * organicNoise(t, 14.5);
+      mouse.rotation.y =
+        mouseRestRotY + msAir * MS_DRIFT_ROT_Y * organicNoise(t, 15.9);
+      mouse.rotation.z = msAir * MS_DRIFT_ROT_Z * organicNoise(t, 17.1);
 
       // Cable follows the mouse end. A 4-point CatmullRom curve at
       // 48 longitudinal segments x 8 radial = ~400 vertices — cheap
