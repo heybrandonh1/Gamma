@@ -94,11 +94,12 @@ export function buildDiscoFloor(): {
           roughness: 0.5,
         });
       } else {
-        // Dark tile — slightly darker base, no emissive. Reads as the
-        // negative space between the colored tiles and lets the lit ones
-        // pop. Still receives shadows from the dancer/ball.
+        // White tile — bright base, no emissive. Acts as the bright
+        // negative space between the colored tiles, giving the floor a
+        // checkered "lit panel / mirror panel" feel rather than a solid
+        // glow grid. Still receives shadows from the dancer/ball.
         mat = new THREE.MeshStandardMaterial({
-          color: 0x101013,
+          color: 0xffffff,
           emissive: 0x000000,
           emissiveIntensity: 0,
           metalness: 0.15,

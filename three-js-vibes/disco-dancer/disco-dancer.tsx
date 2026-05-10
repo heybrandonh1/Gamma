@@ -5,8 +5,7 @@ import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { findBone, disposeObject } from "./bone-utils";
-import { buildPartyHat } from "./party-hat";
+import { disposeObject } from "./bone-utils";
 import { buildDiscoFloor } from "./disco-floor";
 import { buildConfetti, type Confetti } from "./confetti";
 import { buildDiscoBall, type DiscoBall } from "./disco-ball";
@@ -94,7 +93,6 @@ export function DiscoDancer({
     let raf = 0;
     let mixer: THREE.AnimationMixer | null = null;
     let root: THREE.Group | null = null;
-    let hatDispose: (() => void) | null = null;
     let floorDispose: (() => void) | null = null;
     let floorUpdate: ((elapsed: number, paused?: boolean) => void) | null = null;
     let confetti: Confetti | null = null;
@@ -297,17 +295,6 @@ export function DiscoDancer({
           finishSetup(null);
         }
 
-        // Party hat — parented to head bone with a small upward offset.
-        const head = findBone(sambaObject, /Head$/i);
-        if (head) {
-          const { group: hat, dispose } = buildPartyHat();
-          hatDispose = dispose;
-          // Mixamo head bone +Y points up the skull, so the hat sits cleanly.
-          hat.position.set(0, 14, 2);
-          hat.rotation.x = -0.05;
-          head.add(hat);
-        }
-
         scene.add(sambaObject);
       },
       undefined,
@@ -393,8 +380,6 @@ export function DiscoDancer({
         disposeObject(root);
         root = null;
       }
-      hatDispose?.();
-      hatDispose = null;
       floorDispose?.();
       floorDispose = null;
       floorUpdate = null;
