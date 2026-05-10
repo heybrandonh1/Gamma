@@ -5,8 +5,8 @@ import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { findBone, disposeObject } from "./bone-utils";
-import { buildPartyHat } from "./party-hat";
+import { disposeObject } from "./bone-utils";
+import { attachPirateOutfit, type PirateOutfit } from "./pirate-outfit";
 import { buildDiscoFloor } from "./disco-floor";
 import { buildConfetti, type Confetti } from "./confetti";
 import { buildDiscoBall, type DiscoBall } from "./disco-ball";
@@ -95,7 +95,7 @@ export function DiscoDancer({
     let raf = 0;
     let mixer: THREE.AnimationMixer | null = null;
     let root: THREE.Group | null = null;
-    let hatDispose: (() => void) | null = null;
+    let pirateOutfit: PirateOutfit | null = null;
     let floorDispose: (() => void) | null = null;
     let floorUpdate: ((elapsed: number, paused?: boolean) => void) | null = null;
     let confetti: Confetti | null = null;
@@ -310,16 +310,13 @@ export function DiscoDancer({
           finishSetup(null);
         }
 
-        // Party hat — parented to head bone with a small upward offset.
-        const head = findBone(sambaObject, /Head$/i);
-        if (head) {
-          const { group: hat, dispose } = buildPartyHat();
-          hatDispose = dispose;
-          // Mixamo head bone +Y points up the skull, so the hat sits cleanly.
-          hat.position.set(0, 14, 2);
-          hat.rotation.x = -0.05;
-          head.add(hat);
-        }
+        // Pirate outfit — tricorn hat + eyepatch on the head bone, parrot
+        // on the left shoulder, cutlass in the right hand, sash across
+        // the spine, and a navy tint applied to the body materials. The
+        // tint is shared with side-dancer clones (SkeletonUtils.clone
+        // shares materials with the source), so each side dancer skips
+        // its own body-tint pass.
+        pirateOutfit = attachPirateOutfit({ root: sambaObject });
 
         scene.add(sambaObject);
       },
@@ -411,13 +408,16 @@ export function DiscoDancer({
         sideDancers.dispose();
         sideDancers = null;
       }
+      // Pirate outfit must release attached accessories AND restore the
+      // body material tint before we dispose the root — otherwise the
+      // restore writes on already-disposed materials.
+      pirateOutfit?.dispose();
+      pirateOutfit = null;
       if (root) {
         scene.remove(root);
         disposeObject(root);
         root = null;
       }
-      hatDispose?.();
-      hatDispose = null;
       floorDispose?.();
       floorDispose = null;
       floorUpdate = null;

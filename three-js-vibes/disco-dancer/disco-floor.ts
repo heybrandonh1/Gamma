@@ -17,22 +17,25 @@ const TILES_PER_SIDE = 16;
 const TILE_SIZE = 80;
 
 /**
- * Strong ultraviolet palette: deep violets, electric purples, and hot
- * magentas with a single near-UV indigo to anchor the cool end. Reads
- * like a blacklight dancefloor rather than the previous rainbow club.
+ * Classic disco-club palette — saturated 70s/80s dancefloor hues you'd
+ * expect under a mirror ball at Studio 54: party red, tangerine, sunshine
+ * yellow, electric lime, sky-blue, and hot bubblegum pink. Cycles through
+ * these out of phase per tile so the floor reads as the real thing rather
+ * than a single hue washing over the whole grid.
  */
 const PALETTE: number[] = [
-  0x4400dd, // near-UV indigo
-  0x6f00ff, // deep violet
-  0x9d00ff, // electric purple
-  0xb026ff, // neon purple
-  0xd900ff, // electric magenta
-  0xff33cc, // UV pink
+  0xff2c5f, // party red
+  0xff8c1a, // tangerine
+  0xffd400, // sunshine yellow
+  0x39ff14, // electric lime
+  0x00bfff, // sky electric blue
+  0xff48c4, // hot bubblegum pink
 ];
 
-// Pushed up from the previous "club" cap so the UV tiles glow hard
-// enough to read as actual blacklight rather than tinted concrete.
-const MAX_EMISSIVE = 1.1;
+// Disco floors aren't blacklight — they're lit panels reading "warm and
+// alive". Dial the cap back from the UV setting so colors saturate
+// without going neon-overbright.
+const MAX_EMISSIVE = 0.7;
 
 /** Roughly this fraction of tiles are colored/animated; rest stay dark. */
 const LIT_FRACTION = 0.55;
@@ -89,18 +92,18 @@ export function buildDiscoFloor(): {
       if (lit) {
         const startIdx = (x * 7 + z * 13) % PALETTE.length;
         mat = new THREE.MeshStandardMaterial({
-          color: 0x0a0014,
+          color: 0x18181b,
           emissive: PALETTE[startIdx],
           emissiveIntensity: MAX_EMISSIVE * 0.6,
           metalness: 0.2,
           roughness: 0.5,
         });
       } else {
-        // Dark tile — a faint violet-tinted black so the negative space
-        // between lit panels still reads as "blacklight floor" rather
-        // than neutral concrete. Receives shadows from the dancers/ball.
+        // Dark tile — neutral charcoal panel, no emissive. Reads as the
+        // negative space between lit panels and lets the colors pop.
+        // Still receives shadows from the dancers/ball.
         mat = new THREE.MeshStandardMaterial({
-          color: 0x0c0418,
+          color: 0x101013,
           emissive: 0x000000,
           emissiveIntensity: 0,
           metalness: 0.15,

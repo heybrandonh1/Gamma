@@ -1,8 +1,7 @@
 import * as THREE from "three";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 
-import { findBone } from "./bone-utils";
-import { buildPartyHat } from "./party-hat";
+import { attachPirateOutfit, type PirateOutfit } from "./pirate-outfit";
 
 /**
  * Two background dancers that periodically walk in from offscreen, samba
@@ -50,7 +49,7 @@ const SECOND_DANCER_STAGGER_MS = 3500;
 interface SideDancerSlot {
   root: THREE.Object3D;
   mixer: THREE.AnimationMixer;
-  hatDispose: (() => void) | null;
+  outfit: PirateOutfit;
   /** Sign of the dancer's X axis: -1 = enters from the left, +1 = right. */
   side: -1 | 1;
   /** Resting Z position when on stage. */
@@ -131,25 +130,23 @@ export function buildSideDancers(opts: BuildSideDancersOptions): SideDancerRig {
     action.timeScale = 0.94 + Math.random() * 0.12;
     action.play();
 
-    // Each side dancer gets a smaller birthday cake hat so the trio
-    // reads as a coherent set rather than the lead dancer alone in
-    // costume.
-    let hatDispose: (() => void) | null = null;
-    const head = findBone(clone, /Head$/i);
-    if (head) {
-      const hat = buildPartyHat(0.72);
-      hatDispose = hat.dispose;
-      hat.group.position.set(0, 14, 2);
-      hat.group.rotation.x = -0.05;
-      head.add(hat.group);
-    }
+    // Each side dancer gets the full pirate outfit at a smaller scale
+    // so the trio reads as a coherent crew rather than the lead alone
+    // in costume. tintBody is false because SkeletonUtils.clone shares
+    // materials with the source — the lead's tint already shows on the
+    // clones, so a second pass would double-darken.
+    const outfit = attachPirateOutfit({
+      root: clone,
+      scale: 0.72,
+      tintBody: false,
+    });
 
     group.add(clone);
 
     slots.push({
       root: clone,
       mixer,
-      hatDispose,
+      outfit,
       side,
       stageZ,
       cycleStart: null,
@@ -241,7 +238,7 @@ export function buildSideDancers(opts: BuildSideDancersOptions): SideDancerRig {
     for (const slot of slots) {
       slot.mixer.stopAllAction();
       slot.mixer.uncacheRoot(slot.root);
-      slot.hatDispose?.();
+      slot.outfit.dispose();
       // SkeletonUtils.clone shares geometry/material with the source FBX,
       // so we MUST NOT dispose those — that's the host's job when the
       // source itself unmounts. The cloned Skeleton (bone matrix texture)
