@@ -11,6 +11,7 @@ import { buildDiscoFloor } from "./disco-floor";
 import { buildConfetti, type Confetti } from "./confetti";
 import { buildDiscoBall, type DiscoBall } from "./disco-ball";
 import { buildClubLights, type ClubLights } from "./club-lights";
+import { buildSideDancers, type SideDancerRig } from "./side-dancers";
 import {
   createShowController,
   type ShowController,
@@ -100,6 +101,7 @@ export function DiscoDancer({
     let confetti: Confetti | null = null;
     let ball: DiscoBall | null = null;
     let lights: ClubLights | null = null;
+    let sideDancers: SideDancerRig | null = null;
 
     const scene = new THREE.Scene();
 
@@ -254,6 +256,17 @@ export function DiscoDancer({
         const sambaAction = mixer.clipAction(sambaClip);
         sambaAction.play();
 
+        // Two background dancers that periodically walk in from the wings,
+        // samba alongside the lead, and walk back out. They share the
+        // already-loaded FBX (cloned via SkeletonUtils so geometries /
+        // materials are reused — only skeletons are per-instance) and
+        // each get their own mixer that the tick loop drives below.
+        sideDancers = buildSideDancers({
+          source: sambaObject,
+          clip: sambaClip,
+        });
+        scene.add(sideDancers.group);
+
         const finishSetup = (breakAction: THREE.AnimationAction | null) => {
           controllerRef.current = createAnimationController({
             root: sambaObject,
@@ -329,6 +342,7 @@ export function DiscoDancer({
       confetti?.update(delta, reduceMotionRef.current);
       ball?.update(delta, reduceMotionRef.current);
       lights?.update(delta, elapsed, reduceMotionRef.current);
+      sideDancers?.update(delta, now, reduceMotionRef.current);
       showRef.current?.update(now);
 
       if (root) {
@@ -388,6 +402,15 @@ export function DiscoDancer({
       controllerRef.current = null;
       showRef.current?.dispose();
       showRef.current = null;
+      // Side dancers must be torn down BEFORE we dispose the source FBX —
+      // SkeletonUtils.clone shares geometry/material with the source, and
+      // disposing the source first would leave the clones holding stale
+      // GPU resources while we walk their meshes to release skeletons.
+      if (sideDancers) {
+        scene.remove(sideDancers.group);
+        sideDancers.dispose();
+        sideDancers = null;
+      }
       if (root) {
         scene.remove(root);
         disposeObject(root);

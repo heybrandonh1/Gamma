@@ -17,20 +17,22 @@ const TILES_PER_SIDE = 16;
 const TILE_SIZE = 80;
 
 /**
- * Six saturated party hues. Match the club-light and confetti palettes so
- * the whole scene reads as one coherent set of colors rather than three
- * unrelated rainbows.
+ * Strong ultraviolet palette: deep violets, electric purples, and hot
+ * magentas with a single near-UV indigo to anchor the cool end. Reads
+ * like a blacklight dancefloor rather than the previous rainbow club.
  */
 const PALETTE: number[] = [
-  0xff3366, // hot pink
-  0xff9933, // tangerine
-  0xffd633, // sunshine yellow
-  0x33ff99, // electric mint
-  0x33ccff, // cyan
-  0x9933ff, // purple
+  0x4400dd, // near-UV indigo
+  0x6f00ff, // deep violet
+  0x9d00ff, // electric purple
+  0xb026ff, // neon purple
+  0xd900ff, // electric magenta
+  0xff33cc, // UV pink
 ];
 
-const MAX_EMISSIVE = 0.5;
+// Pushed up from the previous "club" cap so the UV tiles glow hard
+// enough to read as actual blacklight rather than tinted concrete.
+const MAX_EMISSIVE = 1.1;
 
 /** Roughly this fraction of tiles are colored/animated; rest stay dark. */
 const LIT_FRACTION = 0.55;
@@ -87,18 +89,18 @@ export function buildDiscoFloor(): {
       if (lit) {
         const startIdx = (x * 7 + z * 13) % PALETTE.length;
         mat = new THREE.MeshStandardMaterial({
-          color: 0x18181b,
+          color: 0x0a0014,
           emissive: PALETTE[startIdx],
           emissiveIntensity: MAX_EMISSIVE * 0.6,
           metalness: 0.2,
           roughness: 0.5,
         });
       } else {
-        // Dark tile — slightly darker base, no emissive. Reads as the
-        // negative space between the colored tiles and lets the lit ones
-        // pop. Still receives shadows from the dancer/ball.
+        // Dark tile — a faint violet-tinted black so the negative space
+        // between lit panels still reads as "blacklight floor" rather
+        // than neutral concrete. Receives shadows from the dancers/ball.
         mat = new THREE.MeshStandardMaterial({
-          color: 0x101013,
+          color: 0x0c0418,
           emissive: 0x000000,
           emissiveIntensity: 0,
           metalness: 0.15,
