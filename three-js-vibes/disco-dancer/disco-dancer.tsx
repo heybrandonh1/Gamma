@@ -2,8 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { disposeObject } from "./bone-utils";
@@ -27,18 +26,9 @@ import {
 } from "../_shared";
 
 export interface DiscoDancerProps {
-  /**
-   * URL of the Samba Dancing GLB (Mixamo rig, converted from the original
-   * Mixamo FBX with `FBX2glTF` and then run through `@gltf-transform/cli`
-   * meshopt). Host app serves from /public. Drops the asset from ~3.5MB
-   * (FBX) to ~520KB (meshopt-compressed GLB) and lets us drop the
-   * FBXLoader bundle from the chunk.
-   */
+  /** URL of the Samba Dancing FBX (Mixamo rig). Host app serves from /public. */
   sambaUrl: string;
-  /**
-   * Optional second clip (also GLB / meshopt). When provided, "break"
-   * mode crossfades to it.
-   */
+  /** Optional second clip; when provided, "break" mode crossfades to it. */
   breakdanceUrl?: string;
   /** When true, animation, swap timer and floor shimmer all pause. */
   reduceMotion?: boolean | null;
@@ -242,16 +232,13 @@ export function DiscoDancer({
     renderer.domElement.addEventListener("click", onClick);
     window.addEventListener("pointerup", onUp);
 
-    const loader = new GLTFLoader();
-    // GLB asset is meshopt-compressed (gltf-transform meshopt). Without this
-    // decoder set, GLTFLoader fails to parse the geometry buffer views.
-    loader.setMeshoptDecoder(MeshoptDecoder);
+    const loader = new FBXLoader();
 
     loader.load(
       sambaUrl,
-      (gltf) => {
+      (sambaObject) => {
         if (!alive || loadGeneration !== loadGenerationRef.current) {
-          disposeObject(gltf.scene);
+          disposeObject(sambaObject);
           return;
         }
 
@@ -260,7 +247,6 @@ export function DiscoDancer({
           disposeObject(root);
         }
 
-        const sambaObject = gltf.scene;
         root = sambaObject;
         sambaObject.scale.setScalar(1);
 
@@ -271,11 +257,9 @@ export function DiscoDancer({
           }
         });
 
-        // GLTF puts animation clips on the loader result, not on the scene
-        // root the way FBX does.
-        const sambaClip = pickPrimaryClip(gltf.animations);
+        const sambaClip = pickPrimaryClip(sambaObject.animations);
         if (!sambaClip) {
-          console.warn("[disco-dancer] samba GLB has no animation clips");
+          console.warn("[disco-dancer] samba FBX has no animation clips");
           scene.add(sambaObject);
           return;
         }
@@ -299,29 +283,27 @@ export function DiscoDancer({
           // action forever, with no procedural overlay or clip crossfade.
         } else if (breakdanceUrl) {
           // Load the breakdance clip onto the same mixer/skeleton.
-          const breakLoader = new GLTFLoader();
-          breakLoader.setMeshoptDecoder(MeshoptDecoder);
-          breakLoader.load(
+          new FBXLoader().load(
             breakdanceUrl,
-            (breakGltf) => {
+            (breakObject) => {
               if (!alive || loadGeneration !== loadGenerationRef.current) {
-                disposeObject(breakGltf.scene);
+                disposeObject(breakObject);
                 return;
               }
-              const breakClip = pickPrimaryClip(breakGltf.animations);
+              const breakClip = pickPrimaryClip(breakObject.animations);
               if (!breakClip || !mixer) {
                 finishSetup(null);
-                disposeObject(breakGltf.scene);
+                disposeObject(breakObject);
                 return;
               }
               const breakAction = mixer.clipAction(breakClip);
               finishSetup(breakAction);
               // We only needed the clip; the mesh stays unused.
-              disposeObject(breakGltf.scene);
+              disposeObject(breakObject);
             },
             undefined,
             (err) => {
-              console.warn("[disco-dancer] breakdance GLB failed; falling back to procedural:", err);
+              console.warn("[disco-dancer] breakdance FBX failed; falling back to procedural:", err);
               finishSetup(null);
             },
           );
@@ -333,7 +315,7 @@ export function DiscoDancer({
       },
       undefined,
       (err) => {
-        console.warn("[disco-dancer] samba GLB failed to load:", err);
+        console.warn("[disco-dancer] samba FBX failed to load:", err);
       },
     );
 
