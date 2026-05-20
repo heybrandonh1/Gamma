@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
-import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 import { disposeObject } from "./bone-utils";
@@ -19,12 +20,25 @@ import {
   pickPrimaryClip,
   type AnimationController,
 } from "./animation-controller";
-import { VibeFallback } from "../_shared/vibe-fallback";
+import {
+  VibeFallback,
+  attachRenderVisibility,
+  createFpsThrottle,
+} from "../_shared";
 
 export interface DiscoDancerProps {
-  /** URL of the Samba Dancing FBX (Mixamo rig). Host app serves from /public. */
+  /**
+   * URL of the Samba Dancing GLB (Mixamo rig, converted from the original
+   * Mixamo FBX with `FBX2glTF` and then run through `@gltf-transform/cli`
+   * meshopt). Host app serves from /public. Drops the asset from ~3.5MB
+   * (FBX) to ~520KB (meshopt-compressed GLB) and lets us drop the
+   * FBXLoader bundle from the chunk.
+   */
   sambaUrl: string;
-  /** Optional second clip; when provided, "break" mode crossfades to it. */
+  /**
+   * Optional second clip (also GLB / meshopt). When provided, "break"
+   * mode crossfades to it.
+   */
   breakdanceUrl?: string;
   /** When true, animation, swap timer and floor shimmer all pause. */
   reduceMotion?: boolean | null;
@@ -88,6 +102,15 @@ export function DiscoDancer({
       return;
     }
 
+    // Pause the render loop when the card is scrolled out of view or the
+    // tab is backgrounded. The visibleRef is read at the top of tick();
+    // visibilitychange + IntersectionObserver flip it. The lazy-mount on
+    // the host side handles "never mounted yet"; this handles "mounted
+    // but the user has scrolled past."
+    const visibility = attachRenderVisibility(mount);
+    // Disco dancer is decorative — 30fps is plenty and halves the GPU cost.
+    const fpsGate = createFpsThrottle(30);
+
     const loadGeneration = ++loadGenerationRef.current;
     let alive = true;
     let raf = 0;
@@ -136,7 +159,10 @@ export function DiscoDancer({
       setFailed(true);
       return;
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap at 1.5 instead of the more common 2 — on retina displays (DPR=2) this
+    // cuts fragment-shader cost by ~44% with negligible visual loss for a card
+    // rendered at ~360-560px wide. Bump back if a vibe looks too soft.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.shadowMap.enabled = true;
     // ACES Filmic keeps the saturated palette readable against the light
     // card bg — unmapped colors clip and wash out.
@@ -216,13 +242,16 @@ export function DiscoDancer({
     renderer.domElement.addEventListener("click", onClick);
     window.addEventListener("pointerup", onUp);
 
-    const loader = new FBXLoader();
+    const loader = new GLTFLoader();
+    // GLB asset is meshopt-compressed (gltf-transform meshopt). Without this
+    // decoder set, GLTFLoader fails to parse the geometry buffer views.
+    loader.setMeshoptDecoder(MeshoptDecoder);
 
     loader.load(
       sambaUrl,
-      (sambaObject) => {
+      (gltf) => {
         if (!alive || loadGeneration !== loadGenerationRef.current) {
-          disposeObject(sambaObject);
+          disposeObject(gltf.scene);
           return;
         }
 
@@ -231,6 +260,7 @@ export function DiscoDancer({
           disposeObject(root);
         }
 
+        const sambaObject = gltf.scene;
         root = sambaObject;
         sambaObject.scale.setScalar(1);
 
@@ -241,9 +271,11 @@ export function DiscoDancer({
           }
         });
 
-        const sambaClip = pickPrimaryClip(sambaObject.animations);
+        // GLTF puts animation clips on the loader result, not on the scene
+        // root the way FBX does.
+        const sambaClip = pickPrimaryClip(gltf.animations);
         if (!sambaClip) {
-          console.warn("[disco-dancer] samba FBX has no animation clips");
+          console.warn("[disco-dancer] samba GLB has no animation clips");
           scene.add(sambaObject);
           return;
         }
@@ -267,27 +299,29 @@ export function DiscoDancer({
           // action forever, with no procedural overlay or clip crossfade.
         } else if (breakdanceUrl) {
           // Load the breakdance clip onto the same mixer/skeleton.
-          new FBXLoader().load(
+          const breakLoader = new GLTFLoader();
+          breakLoader.setMeshoptDecoder(MeshoptDecoder);
+          breakLoader.load(
             breakdanceUrl,
-            (breakObject) => {
+            (breakGltf) => {
               if (!alive || loadGeneration !== loadGenerationRef.current) {
-                disposeObject(breakObject);
+                disposeObject(breakGltf.scene);
                 return;
               }
-              const breakClip = pickPrimaryClip(breakObject.animations);
+              const breakClip = pickPrimaryClip(breakGltf.animations);
               if (!breakClip || !mixer) {
                 finishSetup(null);
-                disposeObject(breakObject);
+                disposeObject(breakGltf.scene);
                 return;
               }
               const breakAction = mixer.clipAction(breakClip);
               finishSetup(breakAction);
               // We only needed the clip; the mesh stays unused.
-              disposeObject(breakObject);
+              disposeObject(breakGltf.scene);
             },
             undefined,
             (err) => {
-              console.warn("[disco-dancer] breakdance FBX failed; falling back to procedural:", err);
+              console.warn("[disco-dancer] breakdance GLB failed; falling back to procedural:", err);
               finishSetup(null);
             },
           );
@@ -299,16 +333,23 @@ export function DiscoDancer({
       },
       undefined,
       (err) => {
-        console.warn("[disco-dancer] samba FBX failed to load:", err);
+        console.warn("[disco-dancer] samba GLB failed to load:", err);
       },
     );
 
     const tick = () => {
       if (!alive) return;
       raf = requestAnimationFrame(tick);
+      // Bail early when off-screen / tab hidden — the RAF stays registered
+      // so the loop resumes the next frame the card is visible again, but
+      // we skip every cent of GPU + mixer work in the meantime.
+      if (!visibility.visibleRef.current) return;
+      const now = performance.now();
+      // Decorative 30fps gate. Drops the render cadence in half for retina
+      // users who'd otherwise be spending most of a frame on fragment work.
+      if (!fpsGate.shouldRender(now)) return;
       const delta = clock.getDelta();
       const elapsed = clock.getElapsedTime();
-      const now = performance.now();
 
       if (mixer && !reduceMotionRef.current) mixer.update(delta);
       controllerRef.current?.update(now);
@@ -366,6 +407,7 @@ export function DiscoDancer({
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      visibility.dispose();
       ro.disconnect();
       controls.dispose();
       renderer.domElement.removeEventListener("pointerdown", onDown);

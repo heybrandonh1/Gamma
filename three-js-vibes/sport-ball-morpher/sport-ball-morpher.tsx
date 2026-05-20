@@ -14,7 +14,11 @@ import {
   buildUnifiedSportBody,
   morphedSurfacePoint,
 } from "./unified-body";
-import { VibeFallback } from "../_shared/vibe-fallback";
+import {
+  VibeFallback,
+  attachRenderVisibility,
+  createFpsThrottle,
+} from "../_shared";
 
 export interface SportBallMorpherProps {
   /** Pause the cycle and rotation when true. */
@@ -62,6 +66,12 @@ export function SportBallMorpher({
       return;
     }
 
+    // See render-loop.ts — pauses the loop when off-screen or tab hidden.
+    const visibility = attachRenderVisibility(mount);
+    // Decorative vibe → 30fps gate. The morpher's surface ripples + body
+    // rotation read fine at half cadence; halving render cost is worth it.
+    const fpsGate = createFpsThrottle(30);
+
     let alive = true;
     let raf = 0;
 
@@ -82,7 +92,8 @@ export function SportBallMorpher({
       setFailed(true);
       return;
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap at 1.5 instead of 2 to cut fragment-shader cost on retina (~44% drop).
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setClearColor(0x000000, 0);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.15;
@@ -271,6 +282,10 @@ export function SportBallMorpher({
     const tick = () => {
       if (!alive) return;
       raf = requestAnimationFrame(tick);
+      // Off-screen / hidden tab → skip the work.
+      if (!visibility.visibleRef.current) return;
+      // 30fps gate for the decorative cadence.
+      if (!fpsGate.shouldRender(performance.now())) return;
       const delta = clock.getDelta();
 
       if (!reduceMotionRef.current) controller.update(delta);
@@ -299,6 +314,7 @@ export function SportBallMorpher({
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      visibility.dispose();
       ro.disconnect();
       controls.dispose();
       renderer.domElement.removeEventListener("pointermove", onPointerMove);

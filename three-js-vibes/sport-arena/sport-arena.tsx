@@ -26,6 +26,7 @@ import {
 } from "./sport-balls";
 import { buildMannequin, type Mannequin } from "./mannequin";
 import { SportArenaWebGL } from "./sport-arena-webgl";
+import { attachRenderVisibility } from "../_shared";
 
 /**
  * SSGI Sport Arena — a 1:1 port of the WebGPU SSGI Ball Pool example
@@ -132,6 +133,11 @@ export function SportArena({
       return;
     }
 
+    // See render-loop.ts — pauses the loop when off-screen or tab hidden.
+    // Sport Arena stays at 60fps (physics-driven) so we do NOT add an FPS
+    // throttle; the visibility gate alone reclaims the dominant cost.
+    const visibility = attachRenderVisibility(mount);
+
     let alive = true;
     let raf = 0;
     // Track everything we own so cleanup is exhaustive even if init throws
@@ -150,6 +156,7 @@ export function SportArena({
       disposed = true;
       alive = false;
       cancelAnimationFrame(raf);
+      visibility.dispose();
       resizeObserver?.disconnect();
       removePointerListeners?.();
       // Dispose three resources first (they hold refs to physics shapes
@@ -184,7 +191,10 @@ export function SportArena({
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 0.5;
         renderer.shadowMap.enabled = true;
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        // Cap at 1.5 (was 2). SSGI + MRT + temporal AA are very fragment-heavy,
+        // so the savings here matter more than for the other vibes; the soft
+        // SSGI look hides the resolution drop.
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 
         await renderer.init();
         if (!alive) {
@@ -662,6 +672,11 @@ export function SportArena({
           if (!alive) return;
           if (!renderer || !renderPipeline) return;
           raf = requestAnimationFrame(animate);
+          // Skip the whole frame (physics + render) when the card is
+          // off-screen or the tab is hidden. Physics state stays frozen,
+          // which is fine since the ball pool's a closed system — nothing
+          // accumulates while paused.
+          if (!visibility.visibleRef.current) return;
 
           timer.update();
           const dt = Math.min(timer.getDelta(), 1 / 30);

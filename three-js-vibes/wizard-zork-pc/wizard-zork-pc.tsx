@@ -20,7 +20,11 @@ import { createPeripherals } from "./peripherals";
 import { createShowController } from "./show-controller";
 import { createTerminalBuffer } from "./terminal-buffer";
 import { createWizardTable } from "./wizard-table";
-import { VibeFallback } from "../_shared/vibe-fallback";
+import {
+  VibeFallback,
+  attachRenderVisibility,
+  createFpsThrottle,
+} from "../_shared";
 
 /**
  * Wizard's Zork PC vibe — a beige CRT on a magical wood table runs
@@ -91,6 +95,12 @@ export function WizardZorkPc({
       return;
     }
 
+    // See render-loop.ts — pauses the loop when off-screen or tab hidden.
+    const visibility = attachRenderVisibility(mount);
+    // Decorative — 30fps is plenty for the candles / particles / orb / CRT
+    // glow loop, and halves the bloom + composer cost.
+    const fpsGate = createFpsThrottle(30);
+
     let alive = true;
     let raf = 0;
 
@@ -107,7 +117,10 @@ export function WizardZorkPc({
       setFailed(true);
       return;
     }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap at 1.5 instead of 2 to cut fragment-shader cost on retina (~44% drop).
+    // EffectComposer below picks up `renderer.getPixelRatio()` so the bloom +
+    // CRT passes match automatically.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     renderer.setClearColor(0x06030a, 1);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
@@ -293,6 +306,10 @@ export function WizardZorkPc({
     const tick = () => {
       if (!alive) return;
       raf = requestAnimationFrame(tick);
+      // Off-screen / hidden tab → skip the work.
+      if (!visibility.visibleRef.current) return;
+      // 30fps gate for the decorative cadence.
+      if (!fpsGate.shouldRender(performance.now())) return;
       const delta = clock.getDelta();
 
       table.tick(delta);
@@ -315,6 +332,7 @@ export function WizardZorkPc({
     return () => {
       alive = false;
       cancelAnimationFrame(raf);
+      visibility.dispose();
       ro.disconnect();
       detachInput();
       controls.dispose();

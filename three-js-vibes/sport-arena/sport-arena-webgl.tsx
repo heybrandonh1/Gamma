@@ -11,7 +11,7 @@ import {
   type SportBallSpec,
 } from "./sport-balls";
 import { buildMannequin, type Mannequin } from "./mannequin";
-import { VibeFallback } from "../_shared/vibe-fallback";
+import { VibeFallback, attachRenderVisibility } from "../_shared";
 
 /**
  * SportArenaWebGL — the WebGL companion to {@link SportArena}.
@@ -104,6 +104,10 @@ export function SportArenaWebGL({
       return;
     }
 
+    // See render-loop.ts — pauses the loop when off-screen or tab hidden.
+    // Like the WebGPU sibling, this stays at 60fps since physics is driving.
+    const visibility = attachRenderVisibility(mount);
+
     let alive = true;
     let raf = 0;
     // Track every disposable we own so cleanup is exhaustive even when
@@ -121,6 +125,7 @@ export function SportArenaWebGL({
       disposed = true;
       alive = false;
       cancelAnimationFrame(raf);
+      visibility.dispose();
       resizeObserver?.disconnect();
       removePointerListeners?.();
       for (const item of owned) {
@@ -155,7 +160,9 @@ export function SportArenaWebGL({
         return;
       }
 
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      // Cap at 1.5 (was 2). WebGL fallback already swaps SSGI for a baked
+      // IBL probe; lowering DPR keeps the room comfortable on integrated GPUs.
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
       renderer.setClearColor(0xeeeeee, 1);
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       // SSGI's GI pass roughly doubles the room's luminance via colored
@@ -562,6 +569,8 @@ export function SportArenaWebGL({
         if (!alive) return;
         if (!renderer) return;
         raf = requestAnimationFrame(animate);
+        // Skip the whole frame (physics + render) when off-screen / hidden.
+        if (!visibility.visibleRef.current) return;
 
         const dt = Math.min(clock.getDelta(), 1 / 30);
         const reduce = reduceMotionRef.current;
